@@ -5,8 +5,9 @@
         "dockerfile": "Dockerfile",
         "context": "..",
         "args": {
-            "http_proxy": "${env:http_proxy}",
-            "https_proxy": "${env:https_proxy}",
+            "http_proxy": "",
+            "https_proxy": "",
+            "no_proxy": "localhost,127.0.0.1"
         }
     },
     "runArgs": [
@@ -18,7 +19,9 @@
     "workspaceFolder": "/workspace",
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
     "mounts": [
-        "source=/mnt/data,target=/mnt/incontainer,type=bind,consistency=cached"
+        "source=${localWorkspaceFolder}/data,target=/mnt/incontainer,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/models/qwen3moe,target=/workspace/data/models/qwen3moe,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/models/qwen3moe-gguf,target=/workspace/data/models/qwen3moe-gguf,type=bind,consistency=cached"
     ],
     "customizations": {
         "vscode": {
