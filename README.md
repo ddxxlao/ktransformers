@@ -120,6 +120,7 @@ python ktransformers/server/main.py \
 ## 5. Measure Qwen3 performance with `test_speed.py`
 Use the async benchmarking script in `ktransformers/tests/test_speed.py` to stream tokens from the running server and collect prefill / decode speeds for Qwen3.
 
+
 1. **Confirm the chat server is running.** Launch the server with the desired backend using the commands in the previous section and note the listening URL (default `http://localhost:10002/v1/chat/completions`) and the exposed model name.
 2. **Install Python dependencies.** Make sure the runtime environment already has the packages from `requirements.txt` installed (in particular `aiohttp`, `numpy`, and `yaml`).
 3. **Run the benchmark script.** Invoke the tester with the server URL, model name, prompt length, and concurrency that you want to measure:
