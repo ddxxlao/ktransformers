@@ -79,19 +79,36 @@ mkdir -p ~/models/qwen3moe-gguf
 ## 快速测试
 
 ### 1. 启动服务器
-有可能卡到flashiner编译，这时候需要检查我们的export TORCH_CUDA_ARCH_LIST="8.9"，最好只选择自己的GPU的架构。
-`python -c "import torch; print(torch.cuda.get_device_capability())"` 来查看架构信息
+有可能卡到flashiner编译，这时候需要检查我们的 `export TORCH_CUDA_ARCH_LIST="8.9"`，最好只选择自己的GPU的架构。
+`python -c "import torch; print(torch.cuda.get_device_capability())"` 来查看架构信息。
+
+#### 标准后端（非AMX）
 ```bash
 cd ~/qwen3_moe_test/ktransformers
 
-# 启动AMX优化服务器
+# GPU 预填 + CPU 解码（默认）
+export TORCH_CUDA_ARCH_LIST="8.9"
+python ktransformers/server/main.py \
+  --architectures Qwen3MoeForCausalLM \
+  --model_path /workspace/data/models/qwen3moe \
+  --gguf_path /workspace/data/models/qwen3moe-gguf/2507/q8 \
+  --optimize_config_path ktransformers/optimize/optimize_rules/Qwen3Moe-serve.yaml \
+  --backend_type balance_serve
+```
+
+> 提示：`Qwen3Moe-serve.yaml` 会自动把 Prefill 计算放在 GPU、推理阶段专家放在 CPU；同时仍然需要 GGUF 权重。若想全程都在 GPU，可在 YAML 中把 `prefill_device`、`generate_device` 均改成 `"cuda"` 并把 `generate_op` 调整为 `"KExpertsTorch"`，或直接使用 `--backend_type ktransformers` 走单进程推理（牺牲并发调度换取部署简单）。
+
+#### AMX 优化后端
+```bash
+cd ~/qwen3_moe_test/ktransformers
+
 export TORCH_CUDA_ARCH_LIST="8.9"
 python ktransformers/server/main.py \
   --architectures Qwen3MoeForCausalLM \
   --model_path /workspace/data/models/qwen3moe \
   --gguf_path /workspace/data/models/qwen3moe-gguf/BF16 \
   --optimize_config_path ktransformers/optimize/optimize_rules/Qwen3Moe-serve-amx.yaml \
-  --backend_type balance_serve 
+  --backend_type balance_serve
 ```
 
 ### 2. 验证服务器状态

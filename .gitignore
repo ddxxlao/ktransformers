@@ -31,3 +31,4 @@ build*
 CMakeFiles/
 kvc2/
 sched/
+data/
