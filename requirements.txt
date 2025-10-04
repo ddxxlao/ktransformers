@@ -1,0 +1,22 @@
+accelerate>=0.31.0
+blobfile
+blessed>=1.20.0
+build
+colorlog
+cpufeature; sys_platform == 'win32' or sys_platform == 'Windows'
+fastapi>=0.111.0
+fire
+langchain>=0.2.0
+ninja
+numpy
+openai
+packaging
+protobuf
+psutil
+sentencepiece>=0.1.97
+setuptools
+tiktoken
+torch>=2.3.0
+transformers>=4.54.0
+wheel
+zmq

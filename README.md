@@ -1,200 +1,141 @@
-<div align="center">
-  <!-- <h1>KTransformers</h1> -->
-  <p align="center">
+# Ktransformer Redevelop for Support Prefetch
+This is simplified KTransformer inference, and mainly support for Ubuntu 22/24.
+In here will provide you some basic instruction about how to build the Ktransformer in devcontainer. I improved `.devcontainer` to build a image environment with all essential tools. In `scripts` folder, I provided several useful scripts to initial build and develop build.
+这是简化版的KTransformer，对于开发环境和脚本等进行了大面积重构，保持简洁与稳定性。使用 `.devcontainer` 作为基础开发镜像环境，并在 `scripts` 目录下提供了多种实用脚本。
 
-<picture>
-    <img alt="KTransformers" src="https://github.com/user-attachments/assets/d5a2492f-a415-4456-af99-4ab102f13f8b" width=50%>
+## 1. Using devcontainer
+You can use `devcontainer` to build a image with all essential tools. Just open this folder in VSCode and it will prompt you to reopen in container. If you don't have docker installed, please install docker first.
+你可以使用 `devcontainer` 来构建一个包含所有必要工具的镜像。只需在 VSCode 中打开此文件夹，它会提示你重新在容器中打开。如果你还没有安装 Docker，请先安装 Docker。
 
-</picture>
+In devcontainer, I set a lot of environment variables to make sure the build is consistent. 
+在 devcontainer 中，我设置了许多环境变量以确保构建的一致性。
 
-</p>
-  <h3>A Flexible Framework for Experiencing Cutting-edge LLM Inference Optimizations</h3>
-  <strong><a href="#show-cases">🌟 Show Cases</a> | <a href="#quick-start">🚀 Quick Start</a> | <a href="#tutorial">📃 Tutorial</a> | <a href="https://github.com/kvcache-ai/ktransformers/discussions">💬  Discussion </a>|<a href="#FAQ"> 🙋 FAQ</a> </strong>
-</div>
+```bash
+# KTransformers Build Environment Variables
+USE_BALANCE_SERVE=1
+USE_NUMA=0
+KTRANSFORMERS_FORCE_BUILD=TRUE
+TORCH_CUDA_ARCH_LIST="8.9" # Changed to support 8.9 only
+DEV_BACKEND=cuda
 
-<h2 id="intro">🎉 Introduction</h2>
-KTransformers, pronounced as Quick Transformers, is designed to enhance your 🤗 <a href="https://github.com/huggingface/transformers">Transformers</a> experience with advanced kernel optimizations and placement/parallelism strategies.
-<br/><br/>
-KTransformers is a flexible, Python-centric framework designed with extensibility at its core. 
-By implementing and injecting an optimized module with a single line of code, users gain access to a Transformers-compatible
-interface, RESTful APIs compliant with OpenAI and Ollama, and even a simplified ChatGPT-like web UI. 
-<br/><br/>
-Our vision for KTransformers is to serve as a flexible platform for experimenting with innovative LLM inference optimizations. Please let us know if you need any other features.
+# CUDA Configuration
+CUDA_HOME=/usr/local/cuda
+CUDA_PATH=/usr/local/cuda
 
-<h2 id="Updates">🔥 Updates</h2>
+# PyTorch CMake Configuration
+PYTHON_EXECUTABLE=/opt/conda/bin/python3
+TORCH_INSTALL_PREFIX=[PyTorch Installation Path]
+CMAKE_PREFIX_PATH=[PyTorch CMake Configuration Path]:$CMAKE_PREFIX_PATH
+```
+Please note that `TORCH_CUDA_ARCH_LIST` has been changed to support only 8.9 to simplify the build process.
+请注意，`TORCH_CUDA_ARCH_LIST` 已更改为仅支持 8.9，以简化构建过程。
 
-* **Sept 11, 2025**: Support Qwen3-Next. ([Tutorial](./doc/en/Qwen3-Next.md))
-* **Sept 05, 2025**: Support Kimi-K2-0905. ([Tutorial](./doc/en/Kimi-K2.md))
-* **July 26, 2025**: Support SmallThinker and GLM4-MoE. ([Tutorial](./doc/en/SmallThinker_and_Glm4moe.md))
-* **July 11, 2025**: Support Kimi-K2. ([Tutorial](./doc/en/Kimi-K2.md))
-* **June 30, 2025**: Support 3-layer (GPU-CPU-Disk) [prefix cache](./doc/en/prefix_cache.md) reuse.
-* **May 14, 2025**: Support Intel Arc GPU ([Tutorial](./doc/en/xpu.md)).
-* **Apr 29, 2025**: Support AMX-Int8、 AMX-BF16 and Qwen3MoE ([Tutorial](./doc/en/AMX.md))
+After the container is built, you can run the `verify_docker_integration.sh` script to check if everything is set up correctly.
+容器构建完成后，你可以运行 `verify_docker_integration.sh` 脚本来检查是否一切设置正确。
 
-https://github.com/user-attachments/assets/fafe8aec-4e22-49a8-8553-59fb5c6b00a2
+- - -
+Errors I Met:
+1. in devcontainer, you have to check `mounts` in `devcontainer.json`, make sure you mount the current folder to `/workspace` in container and the model data and gguf files.
 
-* **Apr 9, 2025**: Experimental support for LLaMA 4 models ([Tutorial](./doc/en/llama4.md)).
-* **Apr 2, 2025**: Support Multi-concurrency. ([Tutorial](./doc/en/balance-serve.md)).
+## 2. Useful Scripts in `scripts` Folder
+In the `scripts` folder, I provided several useful scripts to help you build and develop Ktransformers. Here are the main scripts:
+在 `scripts` 目录下，我提供了几种实用脚本来帮助你构建和开发 Ktransformers。以下是主要脚本：
 
-https://github.com/user-attachments/assets/faa3bda2-928b-45a7-b44f-21e12ec84b8a
-
-* **Mar 15, 2025**: Support ROCm on AMD GPU ([Tutorial](./doc/en/ROCm.md)).
-* **Mar 5, 2025**: Support unsloth 1.58/2.51 bits weights and [IQ1_S/FP8 hybrid](./doc/en/fp8_kernel.md) weights. Support 139K [Longer Context](./doc/en/DeepseekR1_V3_tutorial.md#v022--v023-longer-context--fp8-kernel) for DeepSeek-V3 and R1 in 24GB VRAM.
-* **Feb 25, 2025**: Support [FP8 GPU kernel](./doc/en/fp8_kernel.md) for DeepSeek-V3 and R1; [Longer Context](./doc/en/DeepseekR1_V3_tutorial.md#v022-longer-context).
-* **Feb 15, 2025**: Longer Context (from 4K to 8K for 24GB VRAM) & Slightly Faster Speed （+15%, up to 16 Tokens/s), update [docs](./doc/en/DeepseekR1_V3_tutorial.md) and [online books](https://kvcache-ai.github.io/ktransformers/).
-* **Feb 10, 2025**: Support Deepseek-R1 and V3 on single (24GB VRAM)/multi gpu and 382G DRAM, up to 3~28x speedup. For detailed show case and reproduction tutorial, see [here](./doc/en/DeepseekR1_V3_tutorial.md).
-* **Aug 28, 2024**: Decrease DeepseekV2's required VRAM from 21G to 11G.
-* **Aug 15, 2024**: Update detailed [tutorial](doc/en/injection_tutorial.md) for injection and multi-GPU.
-* **Aug 14, 2024**: Support llamfile as linear backend.
-* **Aug 12, 2024**: Support multiple GPU; Support new model: mixtral 8\*7B  and 8\*22B; Support q2k, q3k, q5k dequant on gpu.
-* **Aug 9, 2024**: Support windows native.
-
-<!-- * **Aug 28, 2024**: Support 1M context under the InternLM2.5-7B-Chat-1M model, utilizing 24GB of VRAM and 150GB of DRAM. The detailed tutorial is [here](./doc/en/long_context_tutorial.md). -->
-
-<h2 id="show-cases">🌟 Show Cases</h2>
-
-<div>
-<h3>GPT-4/o1-level Local VSCode Copilot on a Desktop with only 24GB VRAM</h3>
-</div>
-
-https://github.com/user-attachments/assets/ebd70bfa-b2c1-4abb-ae3b-296ed38aa285
-
-</p>
-
-- **[NEW!!!] Local 671B DeepSeek-Coder-V3/R1:** Running its Q4_K_M version using only 14GB VRAM and 382GB DRAM([Tutorial](./doc/en/DeepseekR1_V3_tutorial.md)).
-  
-  - Prefill Speed (tokens/s):
-    - KTransformers: 54.21 (32 cores) → 74.362 (dual-socket, 2×32 cores) → 255.26 (optimized AMX-based MoE kernel, V0.3 only) → 286.55 (selectively using 6 experts, V0.3 only)
-    - Compared to 10.31 tokens/s in llama.cpp with 2×32 cores, achieving up to **27.79× speedup**.
-  - Decode Speed (tokens/s):
-    - KTransformers: 8.73 (32 cores) → 11.26 (dual-socket, 2×32 cores) → 13.69 (selectively using 6 experts, V0.3 only)
-    - Compared to 4.51 tokens/s in llama.cpp with 2×32 cores, achieving up to **3.03× speedup**.
-  - Upcoming Open Source Release:
-    - AMX optimizations and selective expert activation will be open-sourced in V0.3.
-    - Currently available only in preview binary distribution, which can be downloaded [here](./doc/en/DeepseekR1_V3_tutorial.md).
-- **Local 236B DeepSeek-Coder-V2:** Running its Q4_K_M version using only 21GB VRAM and 136GB DRAM, attainable on a local desktop machine, which scores even better than GPT4-0613 in [BigCodeBench](https://huggingface.co/blog/leaderboard-bigcodebench).
-
-<p align="center">
-  <picture>
-    <img alt="DeepSeek-Coder-V2 Score" src="https://github.com/user-attachments/assets/d052924e-8631-44de-aad2-97c54b965693" width=100%>
-  </picture>
-</p>
-
-- **Faster Speed:** Achieving 126 tokens/s for 2K prompt prefill and 13.6 tokens/s for generation through MoE offloading and injecting advanced kernels from [Llamafile](https://github.com/Mozilla-Ocho/llamafile/tree/main) and [Marlin](https://github.com/IST-DASLab/marlin).
-- **VSCode Integration:** Wrapped into an OpenAI and Ollama compatible API for seamless integration as a backend for [Tabby](https://github.com/TabbyML/tabby) and various other frontends.
-
-<p align="center">
-
-https://github.com/user-attachments/assets/4c6a8a38-05aa-497d-8eb1-3a5b3918429c
-
-</p>
-
-<!-- <h3>1M Context Local Inference on a Desktop with Only 24GB VRAM</h3>
-<p align="center">
-
-https://github.com/user-attachments/assets/a865e5e4-bca3-401e-94b8-af3c080e6c12
-
-* **1M Context InternLM 2.5 7B**: Operates at full bf16 precision, utilizing 24GB VRAM and 150GB DRAM, which is feasible on a local desktop setup. It achieves a 92.88% success rate on the 1M "Needle In a Haystack" test and 100% on the 128K NIAH test.
-
-<p align="center">
-  <picture>
-    <img alt="Single Needle Retrieval 128K" src="./doc/assets/needle_128K.png" width=100%>
-  </picture>
-</p>
-
-<p align="center">
-  <picture>
-    <img alt="Single Needle Retrieval 1000K" src="./doc/assets/needle_1M.png" width=100%>
-  </picture>
-</p>
-
-* **Enhanced Speed**: Reaches 16.91 tokens/s for generation with a 1M context using sparse attention, powered by llamafile kernels. This method is over 10 times faster than full attention approach of llama.cpp.
-
-* **Flexible Sparse Attention Framework**: Offers a flexible block sparse attention framework for CPU offloaded decoding. Compatible with SnapKV, Quest, and InfLLm. Further information is available [here](./doc/en/long_context_introduction.md).
- -->
-
-<strong>More advanced features will coming soon, so stay tuned!</strong>
-
-<h2 id="quick-start">🚀 Quick Start</h2>
-
-Getting started with KTransformers is simple! Follow the steps below to set up and start using it.
-
-we have already supported vendors:
-
-- Metax
-- Sanechips (ZhuFeng V1.0)
-- Intel
-- Ascend
-- Kunpeng
-- AMD
-
-### 📥 Installation
-
-To install KTransformers, follow the official [Installation Guide](https://kvcache-ai.github.io/ktransformers/en/install.html).
-
-<h2 id="tutorial">📃 Brief Injection Tutorial</h2>
-At the heart of KTransformers is a user-friendly, template-based injection framework. 
-This allows researchers to easily replace original torch modules with optimized variants. It also simplifies the process of combining multiple optimizations, allowing the exploration of their synergistic effects.
-
-</br>
-<p align="center">
-  <picture>
-    <img alt="Inject-Struction" src="https://github.com/user-attachments/assets/6b4c1e54-9f6d-45c5-a3fc-8fa45e7d257e" width=65%>
-  </picture>
-</p>
-
-Given that vLLM already serves as a great framework for large-scale deployment optimizations, KTransformers is particularly focused on local deployments that are constrained by limited resources. We pay special attention to heterogeneous computing opportunities, such as GPU/CPU offloading of quantized models. For example, we support the efficient <a herf="https://github.com/Mozilla-Ocho/llamafile/tree/main">Llamafile</a> and <a herf="https://github.com/IST-DASLab/marlin">Marlin</a> kernels for CPU and GPU, respectively. More details can be found <a herf="doc/en/operators/llamafile.md">here</a>.
-
-<h3>Example Usage</h3>
-To utilize the provided kernels, users only need to create a YAML-based injection template and add the call to `optimize_and_load_gguf` before using the Transformers model.
-
-```python
-with torch.device("meta"):
-    model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
-optimize_and_load_gguf(model, optimize_config_path, gguf_path, config)
-...
-generated = prefill_and_generate(model, tokenizer, input_tensor.cuda(), max_new_tokens=1000)
+### First time build
+Before build the Ktransformer, you must install submoudle of git. This is crucial for total process.
+在构建 Ktransformer 之前，您必须安装 git 的子模块。这对于整个过程至关重要。
+```bash
+# Install git submodule
+git submodule update --init --recursive
 ```
 
-In this example, the AutoModel is first initialized on the meta device to avoid occupying any memory resources. Then, `optimize_and_load_gguf` iterates through all sub-modules of the model, matches rules specified in your YAML rule file, and replaces them with advanced modules as specified.
+using `initial_build.sh` to initial build the Ktransformers. This procedure will cost a lot of time based on your CPU performance, which always about 20 mins in a normal machine.
+第一次构建使用 `initial_build.sh` 来初始化构建 Ktransformers。此过程将根据您的 CPU 性能花费大量时间，在普通机器上通常约为 20 分钟。
+Besides, this script will give you a detailed log about the build process, and you can check the log to find out if there are any errors.
+此外，此脚本将为您提供有关构建过程的详细日志，您可以检查日志以找出是否有任何错误。
+```bash
+# Initial build
+./scripts/initial_build.sh
+```
+After the initial build, you can use `test_balance_serve.py` to do verify the situation of KTransformers, especially the balance_serve backend.
+初始构建完成后，您可以使用 `test_balance_serve.py` 来验证 KTransformers 的情况，特别是 balance_serve 后端。
 
-After injection, the original `generate` interface is available, but we also provide a compatible `prefill_and_generate` method, which enables further optimizations like CUDAGraph to improve generation speed.
-
-<h3>How to custom your model</h3>
-
-A detailed tutorial of the injection and multi-GPU using DeepSeek-V2 as an example is given [here](doc/en/injection_tutorial.md).
-
-Below is an example of a YAML template for replacing all original Linear modules with Marlin, an advanced 4-bit quantization kernel.
-
-```yaml
-- match:
-    name: "^model\\.layers\\..*$"  # regular expression 
-    class: torch.nn.Linear  # only match modules matching name and class simultaneously
-  replace:
-    class: ktransformers.operators.linear.KTransformerLinear  # optimized Kernel on quantized data types
-    device: "cpu"   # which devices to load this module when initializing
-    kwargs:
-      generate_device: "cuda"
-      generate_linear_type: "QuantizedLinearMarlin"
+```bash
+# Test balance serve
+python ./scripts/test_balance_serve.py
+```
+### Develop build
+After the initial build, you can use `quick_build.sh` to do incremental build. This script will only build the changed files, which will save a lot of time.
+初始构建完成后，您可以使用 `quick_build.sh` 进行增量构建。此脚本将仅构建更改的文件，从而节省大量时间。
+```bash
+# Quick build
+./scripts/quick_build.sh
 ```
 
-Each rule in the YAML file has two parts: `match` and `replace`. The `match` part specifies which module should be replaced, and the `replace` part specifies the module to be injected into the model along with the initialization keywords.
+- - -
+Errors I Met:
+1. Forget to clear all submodule of git, which cause lack of a build_info.cmake file. So every time when you clone the repo, remember to use `git submodule update --init --recursive` to install all submodules.
+2. If you cannot run the test_balance_serve.py and lack of some module, please check the requirements.txt and install the modules by pip.
 
-You can find example rule templates for optimizing DeepSeek-V2 and Qwen2-57B-A14, two SOTA MoE models, in the [ktransformers/optimize/optimize_rules](ktransformers/optimize/optimize_rules) directory. These templates are used to power the `local_chat.py` demo.
+## 3. Install models and gguf files
+You can download the models and gguf files from the official website or other sources. After downloading, you can put them in the `models` folder. Make sure to create the `models` folder if it does not exist.
+您可以从官方网站或其他来源下载模型和 gguf 文件。下载后，您可以将它们放在 `models` 文件夹中。如果不存在，请确保创建 `models` 文件夹。
 
-If you are interested in our design principles and the implementation of the injection framework, please refer to the [design document](doc/en/deepseek-v2-injection.md).
+```bash
+huggingface-cli download Qwen/Qwen3-30B-A3B --local-dir ~/models/qwen3moe
 
-<h2 id="ack">Acknowledgment and Contributors</h2>
+huggingface-cli download Qwen/Qwen3-30B-A3B-Instruct-2507 --local-dir ~/models/qwen3moe/
 
-The development of KTransformers is based on the flexible and versatile framework provided by Transformers. We also benefit from advanced kernels such as GGUF/GGML, Llamafile, Marlin, sglang and flashinfer. We are planning to contribute back to the community by upstreaming our modifications.
+huggingface-cli download unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF --local-dir ~/models/qwen3moe-gguf/2507/bf16 --include "BF16/*.gguf" 
 
-KTransformers is actively maintained and developed by contributors from the <a href="https://madsys.cs.tsinghua.edu.cn/">MADSys group</a> at Tsinghua University and members from <a href="http://approaching.ai/">Approaching.AI</a>. We welcome new contributors to join us in making KTransformers faster and easier to use.
+huggingface-cli download unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF --local-dir ~/models/qwen3moe-gguf/2507/q8 --include Qwen3-30B-A3B-Instruct-2507-Q8_0.gguf
+```
 
-<h2 id="ack">Discussion</h2>
+## 4. Run the server
+After building and installing the models, you can run the server by using the following command:
+构建和安装模型后，您可以使用以下命令运行服务器：
 
-If you have any questions, feel free to open an issue. Alternatively, you can join our WeChat group for further discussion. QR Code: [WeChat Group](WeChatGroup.png)
+```bash
+# Standard backend (non-AMX)
+export TORCH_CUDA_ARCH_LIST="8.9"
+python ktransformers/server/main.py \
+  --architectures Qwen3MoeForCausalLM \
+  --model_path /workspace/data/models/qwen3moe \
+  --gguf_path /workspace/data/models/qwen3moe-gguf/2507/q8 \
+  --optimize_config_path ktransformers/optimize/optimize_rules/Qwen3Moe-serve.yaml \
+  --backend_type balance_serve
 
-<h2 id="FAQ">🙋 FAQ</h2>
+# AMX optimized backend
+# Only support Intel 4th Gen Xeon (Sapphire Rapids) and later CPUs with AMX support
+# Only support BF16 gguf files
+export TORCH_CUDA_ARCH_LIST="8.9"
+python ktransformers/server/main.py \
+  --architectures Qwen3MoeForCausalLM \
+  --model_path /workspace/data/models/qwen3moe \
+  --gguf_path /workspace/data/models/qwen3moe-gguf/BF16 \
+  --optimize_config_path ktransformers/optimize/optimize_rules/Qwen3Moe-serve-amx.yaml \
+  --backend_type balance_serve
+```
 
-Some common questions are answered in the [FAQ](doc/en/FAQ.md).
+## 5. Measure Qwen3 performance with `test_speed.py`
+Use the async benchmarking script in `ktransformers/tests/test_speed.py` to stream tokens from the running server and collect prefill / decode speeds for Qwen3.
 
+1. **Confirm the chat server is running.** Launch the server with the desired backend using the commands in the previous section and note the listening URL (default `http://localhost:10002/v1/chat/completions`) and the exposed model name.
+2. **Install Python dependencies.** Make sure the runtime environment already has the packages from `requirements.txt` installed (in particular `aiohttp`, `numpy`, and `yaml`).
+3. **Run the benchmark script.** Invoke the tester with the server URL, model name, prompt length, and concurrency that you want to measure:
+
+```bash
+python ktransformers/tests/test_speed.py \
+    --api_url http://localhost:10002/v1/chat/completions \
+    --model Qwen3-30B-A3B-Instruct-2507 \
+    --prompt_lens 1024 \
+    --max_tokens 512 \
+    --concurrent 4
+```
+
+   - `--prompt_lens` chooses one of the built-in prompts (1024, 2048, or 4096 tokens) to stress the prefill stage.
+   - `--max_tokens` limits the streamed completion length; raise this to study longer decode phases.
+   - `--concurrent` controls how many simultaneous requests are issued to probe throughput.
+   - Ensure `--model` matches the identifier exported by your server (for example the name you register via `--architectures`).
+
+4. **Inspect the output.** The script prints the streamed text for each request and reports `prefill speed` and `decode speed` (tokens/s). When all requests finish it also aggregates the total prefill and decode speeds so you can compare different server settings quickly.

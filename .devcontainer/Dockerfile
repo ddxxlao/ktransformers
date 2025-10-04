@@ -172,10 +172,8 @@ ENV PYTHON_EXECUTABLE=/opt/conda/bin/python3
 # 开发环境准备
 # ============================================================================
 
-# 创建开发脚本目录和工作空间
-RUN mkdir -p /workspace/scripts /workspace/build
-
-# 注意：环境初始化功能已合并到 scripts/build_ktransformers.sh 中
+# 创建工作空间
+RUN mkdir -p /workspace/build
 
 # ============================================================================
 # 容器启动配置
@@ -183,8 +181,6 @@ RUN mkdir -p /workspace/scripts /workspace/build
 
 # 设置默认 shell 为 bash
 SHELL ["/bin/bash", "-c"]
-
-# 环境初始化功能已合并到构建脚本中，无需自动加载
 
 # 默认命令
 CMD ["/bin/bash"]
