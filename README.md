@@ -1,4 +1,19 @@
-# Ktransformer Redevelop for Support Prefetch
+# Ktransformer Redevelop for Hybrid CPU+GPU Scheduling
+This project aims to build a hybrid CPU+GPU scheduling framework, based KTransformer, to optimize large Mixture-of-Experts (MoE) model inference on consumer hardware with limited VRAM.
+
+**Problem:** The primary bottleneck in running large MoE models on consumer hardware is the latency caused by offloading expert weights to system DRAM. During the autoregressive decoding phase, the default strategy is using CPU to compute all experts, which leads to high latency due to the limited CPU compute power. On the other hand, offloading experts to GPU VRAM can significantly speed up computation, but the limited VRAM capacity means that not all experts can fit simultaneously. This results in frequent PCIe transfers when an expert is not in the GPU cache, which adds substantial latency.
+
+**Proposed Solution:** We propose a hybrid scheduling system that dynamically allocates expert computations between the CPU and GPU to minimize end-to-end latency. The core idea is to treat the problem as a real-time optimization task.
+
+The key components of our proposed solution are:
+
+- **Mathematical Cost Model**: We've formulated a model to calculate the "cost" of running an expert on either the CPU or the GPU. The GPU cost includes the potential PCIe transfer time if the expert is not already in the VRAM cache.
+- **Dynamic Real-Time Scheduler**: Based on the cost model, a greedy scheduling algorithm will decide, on a per-token basis, where to execute each of the selected top-k experts. It will prioritize moving an expert to the GPU only if the performance gain outweighs the transfer latency.
+- **PCIe-Aware Caching**: The limited GPU VRAM is treated as a cache for experts. We plan to implement a value-driven eviction policy that, unlike simple LRU/LFU, decides which expert to remove from the cache based on a prediction of its future usefulness, thus maximizing the chances of a "cache hit" and avoiding PCIe transfers.
+
+The ultimate goal is to create a practical and adaptive framework that intelligently uses all available compute resources (CPU and GPU) to make inference for large MoE models on consumer-grade hardware as fast as possible.
+
+# How to Build and Develop Ktransformers in Devcontainer
 This is simplified KTransformer inference, and mainly support for Ubuntu 22/24.
 In here will provide you some basic instruction about how to build the Ktransformer in devcontainer. I improved `.devcontainer` to build a image environment with all essential tools. In `scripts` folder, I provided several useful scripts to initial build and develop build.
 这是简化版的KTransformer，对于开发环境和脚本等进行了大面积重构，保持简洁与稳定性。使用 `.devcontainer` 作为基础开发镜像环境，并在 `scripts` 目录下提供了多种实用脚本。
