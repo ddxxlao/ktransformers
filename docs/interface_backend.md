@@ -128,8 +128,8 @@ python ktransformers/server/main.py \
 └─────┬───────────────────────┬───────────┘
       │                       │
       │                       │
-┌─────▼─────┐         ┌──────▼──────────┐
-│  Engine   │◄───────►│   Scheduler     │
+┌─────▼─────┐          ┌──────▼──────────┐
+│  Engine   │◄───────► │   Scheduler     │
 │  Process  │  ZMQ/RPC │   (sched_rpc)   │
 │           │          │                 │
 │ - Model   │          │ - Query Mgr     │
@@ -149,23 +149,4 @@ python ktransformers/server/main.py \
 - 4 并发下总吞吐量提升约 **130%**（根据官方文档）
 - 支持 GPU 共享，提高资源利用率
 
-### Profiling 桥接与日志
 
-- **桥接模块**：`ktransformers.server.balance_serve.profiling_bridge.runtime_bridge` 会在检测到激活的 `Profiler` 时启动后台线程，从 C++ `CpuProfilingRuntime` 中调用 `pop_capture(token_index=…)` 并立即调用 `Profiler.record_token()`，同步写入 `tokens.jsonl`。
-- **启用方式**：默认配置 (`ktransformers/configs/config.yaml`) 已开启 `profiling.bridge.enabled: true`。可通过 YAML 覆盖下列参数：
-  ```yaml
-  profiling:
-    bridge:
-      enabled: true           # 设为 false 将只保留 CPU Collector 数据
-      queue_maxsize: 2048     # 队列容量，流量高时可增大
-      poll_interval_seconds: 0.02
-      shutdown_timeout_seconds: 2.0
-      telemetry:
-        enabled: true
-        warn_queue_depth_ratio: 0.75
-        warn_dropped_captures: 10
-  ```
-- **启动确认**：服务启动日志出现 `Balance_serve profiling bridge enabled (queue_maxsize=..., poll_interval=...)` 代表桥接线程已就绪；如果日志显示 `Profiling enabled for balance_serve but no CpuProfilingRuntime was registered`，需要重新构建带 profiling 的扩展或确认 `profiling.enabled` 已打开。
-- **运行监控**：当队列利用率超过阈值或出现丢弃条目时，日志会输出 WARNING。可根据提示调高 `queue_maxsize`、降低 `poll_interval_seconds` 或减少批大小。`tests/integration/profiling/test_balance_serve_token_capture.py`、`test_balance_serve_profiler_shutdown.py` 提供了快速回归保障。
-- **退出阶段**：正常退出不会看到 `Profiling bridge worker did not terminate`。若出现此警告，适当增大 `shutdown_timeout_seconds` 并检查后台线程是否被阻塞。记录一次运行后务必检查 `${session_dir}/${session_id}/tokens.jsonl` 是否有内容，以确认桥接正常工作。
-- **调试提示字段**：将环境变量 `KTRANSFORMERS_PROFILING_DEBUG_NOTES=1` 写入服务进程时，`tokens.jsonl` / `hardware.jsonl` 的 `notes` 字段会带上调试信息（例如 `captures_merged`、`source_token_index`、`expected_token_fallback`），便于快速定位仍在依赖桥接回填 token_index 的算子。

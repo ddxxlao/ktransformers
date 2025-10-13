@@ -111,7 +111,7 @@ After building and installing the models, you can run the server by using the fo
 构建和安装模型后，您可以使用以下命令运行服务器：
 
 ```bash
-# Standard backend (non-AMX)
+# Standard multi-concurrency backend (non-AMX)
 export TORCH_CUDA_ARCH_LIST="8.9"
 python ktransformers/server/main.py \
   --architectures Qwen3MoeForCausalLM \
@@ -134,7 +134,7 @@ python ktransformers/server/main.py \
 
 ## 5. Measure Qwen3 performance with `test_speed.py`
 Use the async benchmarking script in `ktransformers/tests/test_speed.py` to stream tokens from the running server and collect prefill / decode speeds for Qwen3.
-
+使用 `ktransformers/tests/test_speed.py` 中的异步基准测试脚本从正在运行的服务器流式传输令牌，并收集 Qwen3 的预填充/解码速度。
 
 1. **Confirm the chat server is running.** Launch the server with the desired backend using the commands in the previous section and note the listening URL (default `http://localhost:10002/v1/chat/completions`) and the exposed model name.
 2. **Install Python dependencies.** Make sure the runtime environment already has the packages from `requirements.txt` installed (in particular `aiohttp`, `numpy`, and `yaml`).
