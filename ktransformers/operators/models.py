@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 # coding=utf-8
 """
-Description  :  
+Description  :
 Author       : Azure-Tang
 Date         : 2024-07-25 11:25:24
 Version      : 1.0.0
-LastEditors  : Azure 
+LastEditors  : Azure
 LastEditTime : 2024-08-27 07:29:04
-Copyright (c) 2024 by KVCache.AI, All Rights Reserved. 
+Copyright (c) 2024 by KVCache.AI, All Rights Reserved.
 """
 
 import inspect
@@ -47,6 +47,11 @@ from ktransformers.models.modeling_qwen2_moe import (
     Qwen2MoeSparseMoeBlock,
     Qwen2MoeMLP,
     Qwen2MoeDecoderLayer,
+)
+from ktransformers.models.modeling_qwen3_moe import (
+    Qwen3MoeDecoderLayer,
+    Qwen3MoeSparseMoeBlock,
+    QWEN3_MOE_START_DOCSTRING,
 )
 from ktransformers.models.modeling_deepseek import (
     BaseModelOutputWithPast,
@@ -435,9 +440,9 @@ class KQwen2MoeModel(BaseInjectedModule):
         )
 
     def load_layer_to(self, layer: Qwen2MoeDecoderLayer, target: InferenceState):
-        assert isinstance(
-            layer, Qwen2MoeDecoderLayer
-        ), "module should be nn.ModuleList of decoder layers"
+        assert isinstance(layer, Qwen2MoeDecoderLayer), (
+            "module should be nn.ModuleList of decoder layers"
+        )
 
         # TODO Support restore to original device, not only cuda
         device = "cpu" if target == InferenceState.UNLOAD else "cuda"
@@ -466,6 +471,254 @@ class KQwen2MoeModel(BaseInjectedModule):
         # layer norm
         layer.input_layernorm.to(device)
         layer.post_attention_layernorm.to(device)
+
+
+class KQwen3MoeModel(BaseInjectedModule):
+    """
+    Qwen3 MoE model wrapper that mirrors the ktransformers Qwen2 flow, enabling YAML-driven
+    CPU/GPU expert swapping for prefill and decode.
+    """
+
+    def __init__(
+        self,
+        key: str,
+        gguf_loader: GGUFLoader,
+        config: PretrainedConfig,
+        orig_module: nn.Module,
+        device: str = "cuda",
+        per_layer_prefill_intput_threshold: int = 30000,
+        transfer_map: dict | None = None,
+        **kwargs,
+    ):
+        BaseInjectedModule.__init__(
+            self, key, gguf_loader, config, orig_module, device, **kwargs
+        )
+        self.per_layer_prefill_intput_threshold = per_layer_prefill_intput_threshold
+        self.transfer_map = transfer_map
+        self.stream_device_map = dict()
+
+    @add_start_docstrings_to_model_forward(QWEN3_MOE_START_DOCSTRING)
+    def forward(
+        self,
+        input_ids: torch.LongTensor = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Cache] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        output_router_logits: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        per_layer_prefill_intput_threshold: int | None = None,
+    ) -> Union[Tuple, MoeModelOutputWithPast]:
+        if per_layer_prefill_intput_threshold is None:
+            per_layer_prefill_intput_threshold = self.per_layer_prefill_intput_threshold
+
+        per_layer_prefill_flag = False
+        seq_length = (
+            inputs_embeds.size(1) if inputs_embeds is not None else input_ids.size(1)
+        )
+        if (
+            per_layer_prefill_intput_threshold
+            and per_layer_prefill_intput_threshold < seq_length
+        ):
+            per_layer_prefill_flag = True
+            for layer in self.layers:
+                self.load_layer_to(layer, InferenceState.UNLOAD)
+
+        output_attentions = (
+            output_attentions
+            if output_attentions is not None
+            else self.config.output_attentions
+        )
+        output_router_logits = (
+            output_router_logits
+            if output_router_logits is not None
+            else self.config.output_router_logits
+        )
+        output_hidden_states = (
+            output_hidden_states
+            if output_hidden_states is not None
+            else self.config.output_hidden_states
+        )
+        use_cache = use_cache if use_cache is not None else self.config.use_cache
+
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
+
+        if (input_ids is None) ^ (inputs_embeds is not None):
+            raise ValueError(
+                "You must specify exactly one of input_ids or inputs_embeds"
+            )
+
+        if self.gradient_checkpointing and self.training:
+            if use_cache:
+                logger.warning_once(
+                    "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
+                )
+                use_cache = False
+
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache()
+
+        if inputs_embeds is None:
+            inputs_embeds = self.embed_tokens(input_ids)
+
+        if cache_position is None:
+            past_seen_tokens = (
+                past_key_values.get_seq_length() if past_key_values is not None else 0
+            )
+            cache_position = torch.arange(
+                past_seen_tokens,
+                past_seen_tokens + inputs_embeds.shape[1],
+                device=inputs_embeds.device,
+            )
+        if position_ids is None:
+            position_ids = cache_position.unsqueeze(0)
+
+        causal_mask = self._update_causal_mask(  # type: ignore[attr-defined]
+            attention_mask,
+            inputs_embeds,
+            cache_position,
+            past_key_values,
+            output_attentions,
+        )
+
+        hidden_states = inputs_embeds
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+
+        all_hidden_states = () if output_hidden_states else None
+        all_self_attns = () if output_attentions else None
+        all_router_logits = () if output_router_logits else None
+
+        for layer_idx, decoder_layer in enumerate(self.layers):
+            if self.transfer_map is not None and layer_idx in self.transfer_map:
+                prev_stream = torch.cuda.current_stream()
+                cur_device = self.transfer_map[layer_idx]
+                if cur_device not in self.stream_device_map:
+                    self.stream_device_map[cur_device] = torch.cuda.Stream(cur_device)
+                torch.cuda.set_device(cur_device)
+                self.stream_device_map[cur_device].wait_stream(prev_stream)
+                torch.cuda.set_stream(self.stream_device_map[cur_device])
+                hidden_states = hidden_states.to(
+                    self.transfer_map[layer_idx], non_blocking=True
+                )
+                causal_mask = (
+                    causal_mask.to(self.transfer_map[layer_idx], non_blocking=True)
+                    if causal_mask is not None
+                    else None
+                )
+                position_ids = (
+                    position_ids.to(self.transfer_map[layer_idx], non_blocking=True)
+                    if position_ids is not None
+                    else None
+                )
+                cache_position = (
+                    cache_position.to(self.transfer_map[layer_idx], non_blocking=True)
+                    if cache_position is not None
+                    else None
+                )
+
+            if output_hidden_states:
+                all_hidden_states += (hidden_states,)
+
+            if self.gradient_checkpointing and self.training:
+                layer_outputs = self._gradient_checkpointing_func(  # type: ignore[attr-defined]
+                    decoder_layer.__call__,
+                    hidden_states,
+                    causal_mask,
+                    position_ids,
+                    past_key_values,
+                    output_attentions,
+                    output_router_logits,
+                    use_cache,
+                    cache_position,
+                    position_embeddings,
+                )
+            else:
+                if per_layer_prefill_flag:
+                    self.load_layer_to(decoder_layer, InferenceState.PREFILL)
+                    torch.cuda.empty_cache()
+                layer_outputs = decoder_layer(
+                    hidden_states,
+                    attention_mask=causal_mask,
+                    position_ids=position_ids,
+                    past_key_value=past_key_values,
+                    output_attentions=output_attentions,
+                    output_router_logits=output_router_logits,
+                    use_cache=use_cache,
+                    cache_position=cache_position,
+                    position_embeddings=position_embeddings,
+                )
+                if per_layer_prefill_flag:
+                    self.load_layer_to(decoder_layer, InferenceState.UNLOAD)
+                    torch.cuda.empty_cache()
+
+            hidden_states = layer_outputs[0]
+
+            if output_attentions:
+                all_self_attns += (layer_outputs[1],)
+
+            if output_router_logits:
+                all_router_logits += (layer_outputs[-1],)
+
+        hidden_states = self.norm(hidden_states)
+
+        if per_layer_prefill_flag:
+            per_layer_prefill_flag = False
+            for layer in self.layers:
+                self.load_layer_to(layer, InferenceState.GENERATE)
+
+        if output_hidden_states:
+            all_hidden_states += (hidden_states,)
+
+        output = MoeModelOutputWithPast(
+            last_hidden_state=hidden_states,
+            past_key_values=past_key_values,
+            hidden_states=all_hidden_states,
+            attentions=all_self_attns,
+            router_logits=all_router_logits,
+        )
+        return output if return_dict else output.to_tuple()
+
+    def load_layer_to(self, layer: Qwen3MoeDecoderLayer, target: InferenceState):
+        assert isinstance(layer, Qwen3MoeDecoderLayer), (
+            "module should be nn.ModuleList of decoder layers"
+        )
+
+        device = "cpu" if target == InferenceState.UNLOAD else "cuda"
+
+        for proj in ("q_proj", "k_proj", "v_proj", "o_proj"):
+            proj_module = getattr(layer.self_attn, proj, None)
+            if hasattr(proj_module, "set_inference_mode"):
+                proj_module.set_inference_mode(target)
+        if hasattr(layer.self_attn, "rotary_emb") and hasattr(
+            layer.self_attn.rotary_emb, "to"
+        ):
+            layer.self_attn.rotary_emb = layer.self_attn.rotary_emb.to(device)
+
+        if isinstance(layer.mlp, Qwen3MoeSparseMoeBlock):
+            if hasattr(layer.mlp, "gate") and hasattr(
+                layer.mlp.gate, "set_inference_mode"
+            ):
+                layer.mlp.gate.set_inference_mode(target)
+            if hasattr(layer.mlp, "experts") and hasattr(
+                layer.mlp.experts, "set_inference_mode"
+            ):
+                layer.mlp.experts.set_inference_mode(target)
+        else:
+            for proj in ("gate_proj", "up_proj", "down_proj"):
+                proj_module = getattr(layer.mlp, proj, None)
+                if hasattr(proj_module, "set_inference_mode"):
+                    proj_module.set_inference_mode(target)
+
+        if hasattr(layer.input_layernorm, "to"):
+            layer.input_layernorm.to(device)
+        if hasattr(layer.post_attention_layernorm, "to"):
+            layer.post_attention_layernorm.to(device)
 
 
 DeepseekV2_INPUTS_DOCSTRING = r"""
@@ -638,7 +891,7 @@ class KDeepseekV2Model(BaseInjectedModule):
             if use_legacy_cache:
                 past_key_values = DynamicCache.from_legacy_cache(past_key_values)
             past_key_values_length = past_key_values.get_usable_length(seq_length)
-        
+
         if inputs_embeds is None:
             org_device = input_ids.device
             # TODO move to embed_tokens's device, not hard code to cpu
@@ -660,8 +913,7 @@ class KDeepseekV2Model(BaseInjectedModule):
             position_ids = cache_position.unsqueeze(0)
 
         if inputs_embeds.device.type == "xpu" and position_ids is not None:
-            cos, sin = self.layers[0].self_attn.rotary_emb(inputs_embeds,
-                                                           position_ids)
+            cos, sin = self.layers[0].self_attn.rotary_emb(inputs_embeds, position_ids)
             position_embeddings = (cos, sin)
         else:
             position_embeddings = None
@@ -669,14 +921,23 @@ class KDeepseekV2Model(BaseInjectedModule):
         if per_layer_prefill_flag:
             causal_mask = None
         else:
-            if (os.name == 'nt'
+            if (
+                os.name == "nt"
                 or get_compute_capability() < 8
-                or (self.transfer_map is not None and 'cpu' in self.transfer_map.values())
-                or device_manager.gpu_vendor != GPUVendor.NVIDIA):
+                or (
+                    self.transfer_map is not None
+                    and "cpu" in self.transfer_map.values()
+                )
+                or device_manager.gpu_vendor != GPUVendor.NVIDIA
+            ):
                 # print("for Windows or GPU before ampere, use forward_windows")
                 # only use mask in forward windows or can't flash attn
                 causal_mask = self._update_causal_mask(
-                    attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
+                    attention_mask,
+                    inputs_embeds,
+                    cache_position,
+                    past_key_values,
+                    output_attentions,
                 )
             else:
                 causal_mask = None
@@ -700,7 +961,10 @@ class KDeepseekV2Model(BaseInjectedModule):
             if self.transfer_map is not None and i in self.transfer_map:
                 prev_stream = torch.cuda.current_stream()
                 cur_device = self.transfer_map[i]
-                if cur_device not in self.stream_device_map and cur_device.lower() != "cpu":
+                if (
+                    cur_device not in self.stream_device_map
+                    and cur_device.lower() != "cpu"
+                ):
                     self.stream_device_map[cur_device] = torch.cuda.Stream(cur_device)
                 if cur_device.lower() != "cpu":
                     torch.cuda.set_device(cur_device)
@@ -793,7 +1057,7 @@ class KDeepseekV2Model(BaseInjectedModule):
             t7 = time.time()
 
             print(
-                f"total time: {t7-t3}, \n layer num{len(self.layers)}, gpu time: {t_gpu}, cpu time: {t_cpu}, forward time: {t_f}, restore time: {t7-t6}"
+                f"total time: {t7 - t3}, \n layer num{len(self.layers)}, gpu time: {t_gpu}, cpu time: {t_cpu}, forward time: {t_f}, restore time: {t7 - t6}"
             )
 
         # add hidden states from the last decoder layer
@@ -821,9 +1085,9 @@ class KDeepseekV2Model(BaseInjectedModule):
         )
 
     def load_layer_to(self, layer: DeepseekV2DecoderLayer, target: InferenceState):
-        assert isinstance(
-            layer, DeepseekV2DecoderLayer
-        ), "module should be nn.ModuleList of decoder layers"
+        assert isinstance(layer, DeepseekV2DecoderLayer), (
+            "module should be nn.ModuleList of decoder layers"
+        )
 
         # TODO Support restore to original device, not only cuda
         device = "cpu" if target == InferenceState.UNLOAD else "cuda"
@@ -991,17 +1255,16 @@ class KLlamaModel(BaseInjectedModule):
         transfer_map: dict = None,
         **kwargs,
     ):
-
         BaseInjectedModule.__init__(
             self, key, gguf_loader, config, orig_module, device, **kwargs
         )
         self.per_layer_prefill_intput_threshold = per_layer_prefill_intput_threshold
         self.transfer_map = transfer_map
         self.stream_device_map = dict()
-        user_path: str = os.path.expanduser('~')
-        localstore_path: str = os.path.join(user_path,'.ktransformers')
-        config_path: str = os.path.join(localstore_path,Config.CONFIG_FILE_NAME)
-        with open(config_path,"r") as file:
+        user_path: str = os.path.expanduser("~")
+        localstore_path: str = os.path.join(user_path, ".ktransformers")
+        config_path: str = os.path.join(localstore_path, Config.CONFIG_FILE_NAME)
+        with open(config_path, "r") as file:
             config_yaml = yaml.safe_load(file.read())
             self.long_context_config = config_yaml.get("long_context")
             self.ext_config = config_yaml.get("ext")
@@ -1119,7 +1382,7 @@ class KLlamaModel(BaseInjectedModule):
                 return_dict,
             )
         elif q_len <= chunck_size:
-            inputs_embeds = inputs_embeds.to('cuda')
+            inputs_embeds = inputs_embeds.to("cuda")
             output = self.forward_chunk(
                 inputs_embeds,
                 causal_mask,
@@ -1135,19 +1398,23 @@ class KLlamaModel(BaseInjectedModule):
             KLlamaModel.dynamic_sdpa.clear_importance(cache_position[-1] + 1)
             return output
         cur_idx = 0
-        assert (
-            output_attentions == False
-        ), "output_attentions is not supported when using chunked attention"
+        assert output_attentions == False, (
+            "output_attentions is not supported when using chunked attention"
+        )
         attn_output = None
         # prefill
         KLlamaModel.dynamic_sdpa.remaining_length = q_len
         while cur_idx < q_len:
-            print(f'current prefill length: {cur_idx}')
+            print(f"current prefill length: {cur_idx}")
             chunk_mask = None
-            if inputs_embeds.device.type == 'cpu':
-                tmp_inputs_embeds = inputs_embeds[:, cur_idx : min(cur_idx + chunck_size, q_len)].to("cuda")
+            if inputs_embeds.device.type == "cpu":
+                tmp_inputs_embeds = inputs_embeds[
+                    :, cur_idx : min(cur_idx + chunck_size, q_len)
+                ].to("cuda")
             else:
-                tmp_inputs_embeds = inputs_embeds[:, cur_idx : min(cur_idx + chunck_size, q_len)]
+                tmp_inputs_embeds = inputs_embeds[
+                    :, cur_idx : min(cur_idx + chunck_size, q_len)
+                ]
             output_with_past = self.forward_chunk(
                 tmp_inputs_embeds,
                 chunk_mask,
@@ -1183,7 +1450,6 @@ class KLlamaModel(BaseInjectedModule):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ):
-
         output_hidden_states = (
             output_hidden_states
             if output_hidden_states is not None

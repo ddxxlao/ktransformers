@@ -12,7 +12,6 @@ Make the single-process `ktransformers` HTTP backend load and serve Qwen3 MoE mo
 - Qwen3 专用 YAML 规则（例如 `ktransformers/optimize/optimize_rules/Qwen3Moe-serve.yaml`）已经存在，需要确保默认配置能识别并使用它。
 - 同时，对于Cache机制，`ktransformers`后端使用 `StaticCache`，需要确认它能接受 Qwen3 的配置（KV形状、头维度等）。如果 `config._attn_implementation` 需要设置（例如 `"flash_attention_2"`），则需要模仿 `balance_serve`中的逻辑。
 
-
 ## Required Changes
 
 1. **模型注册与初始化链路**
@@ -23,9 +22,9 @@ Make the single-process `ktransformers` HTTP backend load and serve Qwen3 MoE mo
 
 在单进程 ktransformers 后端里，KQwen3MoeForCausalLM 这套 balance_server 封装确实无法直接复用，原因主要在于它与调度器强绑定的几件事：
 
-输入结构完全不同：forward() 收到的是 ForwardBatchInput，里面带 q_indptr/kv_indptr/page_idx/page_offset 等分页信息；单进程后端只有 input_ids、attention_mask、cache_position，没有这些批调度张量。
+输入结构完全不同：forward() 收到的是 ForwardBatchInput，里面带 q*indptr/kv_indptr/page_idx/page_offset 等分页信息；单进程后端只有 input_ids、attention_mask、cache_position，没有这些批调度张量。
 缓存实现不兼容：balance_server 依赖的是 KGQACache（分页 KV、FlashInfer 需要的索引表），而简单后端只有 StaticCache，接口集中在 past_key_values.update。
-层内算子调用方式：算子被替换成 ktransformers.operators.balance_serve_*，默认会访问 bsz_tensor、FlashInfer wrapper；单 token decode、无 wrapper 的场景根本跑不起来。
+层内算子调用方式：算子被替换成 ktransformers.operators.balance_serve*\*，默认会访问 bsz_tensor、FlashInfer wrapper；单 token decode、无 wrapper 的场景根本跑不起来。
 所以要让 ktransformers 后端加载 Qwen3-MoE，有两条路：
 
 方案 A：新封装单独实现
@@ -40,16 +39,15 @@ Make the single-process `ktransformers` HTTP backend load and serve Qwen3 MoE mo
 方案 B：对现有 balance_server 封装做大幅“降级”
 如果想沿用当前文件里的类，也需要完成以下重写：
 
-修改 __init__ 和 forward()，改成接受 input_ids/attention_mask/past_key_values，内部不再访问 ForwardBatchInput 或 FlashInfer。
+修改 **init** 和 forward()，改成接受 input_ids/attention_mask/past_key_values，内部不再访问 ForwardBatchInput 或 FlashInfer。
 删掉 KGQACache 相关逻辑，改用 StaticCache，即调用 past_key_values.update(...) 而不是 self.cache.get_page_table()。
 关联的算子要换成标准实现：例如 attention 使用 Hugging Face 自带、MoE block 重写为直接调用专家列表，不访问 flashInferAttn。
 这个改动其实等同于重新写一个“StaticCache 版”封装，工作量与方案 A 基本一致，因此更推荐直接参照 Hugging Face 版本去写一份新的类，避免和 balance_server 特定逻辑纠缠在一起。
 
-总结：是的，需要实现一个“不会依赖 ForwardBatchInput/KGQACache”的自定义封装，结构类似 m 个现有 custom_modeling_* 文件，但 forward 签名要完全保持 Hugging Face 标准，这样才能被 ktransformers 后端在 prefill() / decode_one_tokens() 里调用。
-
+总结：是的，需要实现一个“不会依赖 ForwardBatchInput/KGQACache”的自定义封装，结构类似 m 个现有 custom*modeling*\* 文件，但 forward 签名要完全保持 Hugging Face 标准，这样才能被 ktransformers 后端在 prefill() / decode_one_tokens() 里调用。
 
 2. **GGUF 注入与算子替换**
-   - `optimize_and_load_gguf` 在 `ktransformers/server/backend/interfaces/ktransformers.py:55-74` 被调用，负责读取 YAML 后执行 `gen_optimize_config` → `inject` → `load_weights`。当前的 `Qwen3Moe-serve.yaml` 旨在给 balance_server 使用，`self_attn` / `mlp` / `experts` 都替换成 `ktransformers.operators.balance_serve_*`（依赖 FlashInfer wrapper、`KGQACache`、`ForwardBatchInput`）。为单进程后端适配需要：
+   - `optimize_and_load_gguf` 在 `ktransformers/server/backend/interfaces/ktransformers.py:55-74` 被调用，负责读取 YAML 后执行 `gen_optimize_config` → `inject` → `load_weights`。当前的 `Qwen3Moe-serve.yaml` 旨在给 balance*server 使用，`self_attn` / `mlp` / `experts` 都替换成 `ktransformers.operators.balance_serve*\*`（依赖 FlashInfer wrapper、`KGQACache`、`ForwardBatchInput`）。为单进程后端适配需要：
      - 复制并改编一份仅依赖标准 HF `forward` 签名的规则（可命名为 `Qwen3Moe-ktransformers.yaml`），改用 `ktransformers.operators.attention`、`operators.experts`、`operators.mlp` 中不绑定 balance_server 的实现，并确认线性层仍使用 `KTransformersLinear`。
      - 为新的规则设置纯 GPU 的设备映射（balance_server 版本把专家生成阶段放在 CPU，见 `Qwen3Moe-serve.yaml:56-58`，单进程后端无法复用）。
      - 在 `default_optimize_rules` 中把 `"Qwen3MoeForCausalLM"` 指向新规则，同时验证 `ModelLoaderFactory` 能根据 Qwen3 GGUF 的张量命名找到全部权重。
@@ -79,28 +77,3 @@ Make the single-process `ktransformers` HTTP backend load and serve Qwen3 MoE mo
    - CLI：`ktransformers/server/args.py:115-146` 会把 GGUF 配置中的 `architectures[0]` 写回 `args.architectures` 并推导显存开销。新增静态封装后需在同一分支登记 `"Qwen3MoeForCausalLMStatic"`（或最终类名），确保命令行 `--architectures` 能映射到新实现且 `gpu_memory_size` 计算正确。
    - 文档：更新 `README.md` / `docs/interface_backend.md`，说明如何选择新的规则文件、对应的架构名称（如 `Qwen3MoeForCausalLMStatic`）、GGUF 要求与 `balance_serve` 差异；必要时补充 `scripts/` 下的启动示例。
    - 测试：在 `ktransformers/local_chat_test.py` 或新增用例里覆盖 `"Qwen3MoeForCausalLMStatic"` 的解析；准备最小推理脚本执行一次 `prefill+decode` 验证 StaticCache 写入，并在 CI 中运行相关 `pytest` 子集（至少 `ktransformers/tests/unit`）。
-
-## Implementation Checklist
-
-为便于后续排期，把关键改动整理如下：
-
-1. **新封装类**
-   - 新增 `KQwen3MoeForCausalLMStatic`（命名可调整）以 Hugging Face 基类为骨架，覆写 `_supports_static_cache = True`，沿用 `cache_position + past_key_values.update`。
-
-2. **优化规则**
-   - 复制改写 `Qwen3Moe-serve.yaml`，产出 `ktransformers/optimize/optimize_rules/Qwen3Moe-ktransformers.yaml`，仅保留无需 FlashInfer 的算子（RotaryEmbedding、KTransformersLinear、KQwen3MoeRMSNorm、纯 GPU MoE 等）。
-
-3. **映射注册**
-   - 更新 `ktransformers/local_chat.py` 及其测试版，注册新的封装类与默认规则路径，确保 `custom_models` / `default_optimize_rules` 能解析。
-
-4. **后端接入**
-   - 在 `ktransformers/server/backend/interfaces/ktransformers.py` 中接入新封装，prefill/decode 流程沿用 `StaticCache`。
-
-5. **启动参数**
-   - 扩展 `ktransformers/server/args.py`，支持 `--architectures Qwen3MoeForCausalLMStatic` 并正确计算显存预算。
-
-6. **文档同步**
-   - 更新 `README.md`、`docs/interface_backend.md` 与相关脚本示例，说明新规则文件、封装类与使用方式。
-
-7. **验证**
-   - 补充最小推理脚本与单元/集成测试，覆盖 StaticCache 的 `prefill + decode` 流程。

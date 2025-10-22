@@ -59,10 +59,12 @@ def main():
 `ArgumentParser.parse_args()` 方法（行 14-173）执行以下关键步骤：
 
 **步骤 1**: 解析命令行参数（行 15-119）
+
 - 创建 `argparse.ArgumentParser` 并添加所有可配置参数
 - 包括模型路径、设备、批处理、缓存、采样等参数
 
 **步骤 2**: 统一模型路径处理（行 121-133）
+
 ```python
 if (args.model_path is not None):
     args.model_dir = args.model_path
@@ -71,6 +73,7 @@ else:
 ```
 
 **步骤 3**: 自动识别模型架构（行 143-157）
+
 ```python
 try:
     model_config = AutoConfig.from_pretrained(args.model_dir, trust_remote_code=True)
@@ -83,6 +86,7 @@ except:
 这里使用 HuggingFace `AutoConfig` 读取模型目录中的 `config.json`，获取 `model_config.architectures[0]`，对于 Qwen2MoE 模型，该值为 `"Qwen2MoeForCausalLM"`。
 
 **步骤 4**: 计算 GPU 显存需求（行 154-158）
+
 ```python
 if model_config.architectures[0] == "Qwen2MoeForCausalLM" or ...:
     # 对于 MoE 模型，精确计算 KV Cache 显存需求
@@ -96,6 +100,7 @@ if model_config.architectures[0] == "Qwen2MoeForCausalLM" or ...:
 ```
 
 **步骤 5**: 分配端口（行 163-170）
+
 ```python
 free_ports = get_free_ports(3, [args.port])
 args.sched_port = free_ports[0]           # 调度器端口（用于 balance_serve）
@@ -116,7 +121,7 @@ def create_interface(config: Config, default_args: ConfigArgs):
     elif config.backend_type == 'balance_serve':
         from ktransformers.server.backend.interfaces.balance_serve import BalanceServeInterface as BackendInterface
     # ... 其他后端类型
-    
+
     GlobalInterface.interface = BackendInterface(default_args)  # 行 30: 实例化后端
     GlobalContextManager.context_manager = ThreadContextManager(GlobalInterface.interface)  # 行 31: 创建上下文管理器
 ```
@@ -136,8 +141,8 @@ def __init__(self, args: ConfigArgs = default_args):
     self.args = args                                              # 行 29: 保存配置
     torch.set_grad_enabled(False)                                 # 行 30: 禁用梯度计算
     self.tokenizer = AutoTokenizer.from_pretrained(              # 行 31: 加载分词器
-        args.model_dir, 
-        device=args.device, 
+        args.model_dir,
+        device=args.device,
         trust_remote_code=args.trust_remote_code
     )
 ```
@@ -146,7 +151,7 @@ def __init__(self, args: ConfigArgs = default_args):
 
 ```python
 config = AutoConfig.from_pretrained(                             # 行 33: 加载模型配置
-    args.model_dir, 
+    args.model_dir,
     trust_remote_code=args.trust_remote_code
 )
 try:
@@ -170,6 +175,7 @@ if config.architectures[0] == "Qwen2MoeForCausalLM":           # 行 45-46: Qwen
 ```
 
 这一步骤至关重要：
+
 - **Qwen2MoE 必须使用 `flash_attention_2`**，否则在前向传播时会出现数值溢出问题
 - 该配置会传递给模型的 `Attention` 层，影响其内部实现选择
 
@@ -195,11 +201,13 @@ custom_models = {
 ```
 
 **导入路径**: `ktransformers/local_chat.py:25`
+
 ```python
 from ktransformers.models.modeling_qwen2_moe import Qwen2MoeForCausalLM
 ```
 
 **模型文件**: `ktransformers/models/modeling_qwen2_moe.py`
+
 - 这是修改自 HuggingFace Transformers 的自定义实现
 - 保留了标准的 `forward()` 接口，支持 `StaticCache`
 - 适配了 ktransformers 的算子替换机制
@@ -237,14 +245,15 @@ if gguf_path is None:
     gguf_path = input("please input the path of your gguf file...")  # 行 58-60: 交互式输入
 
 optimize_and_load_gguf(                                         # 行 61: 执行优化和加载
-    self.model, 
-    optimize_config_path, 
-    gguf_path, 
+    self.model,
+    optimize_config_path,
+    gguf_path,
     config
 )
 ```
 
 这一步调用 `optimize_and_load_gguf()` 函数（详见第 2 节），完成：
+
 1. 算子替换（将标准层替换为自定义算子）
 2. GGUF 权重加载
 3. 设备映射配置
@@ -274,6 +283,7 @@ self.cache = StaticCache(                                       # 行 69: 创建
 **StaticCache 实现**: `ktransformers/models/custom_cache.py:18-120`
 
 关键特性：
+
 - **预分配固定大小的 KV 缓存张量**（避免动态分配开销）
 - **支持多设备**: 不同层的 KV 可以存储在不同 GPU 上
 - **Qwen2MoE 缓存形状**: `(batch_size, num_key_value_heads, max_cache_len, head_dim)`
@@ -313,19 +323,19 @@ main.py:main()
 
 **关键文件映射（Qwen2MoE）**:
 
-| 组件 | 文件路径 | 行数 |
-|------|---------|------|
-| 入口函数 | `ktransformers/server/main.py` | 102-123 |
-| 配置加载 | `ktransformers/server/config/config.py` | 19-211 |
-| 参数解析 | `ktransformers/server/args.py` | 14-173 |
-| 架构识别 | `ktransformers/server/args.py` | 143-158 |
-| 接口创建 | `ktransformers/server/utils/create_interface.py` | 19-31 |
-| 后端初始化 | `ktransformers/server/backend/interfaces/ktransformers.py` | 27-79 |
-| 模型注册 | `ktransformers/local_chat.py` | 36-42 |
-| 规则映射 | `ktransformers/local_chat.py` | 46-52 |
-| 模型实现 | `ktransformers/models/modeling_qwen2_moe.py` | 1-1766 |
-| 优化规则 | `ktransformers/optimize/optimize_rules/Qwen2-57B-A14B-Instruct.yaml` | 1-68 |
-| 静态缓存 | `ktransformers/models/custom_cache.py` | 18-120 |
+| 组件       | 文件路径                                                             | 行数    |
+| ---------- | -------------------------------------------------------------------- | ------- |
+| 入口函数   | `ktransformers/server/main.py`                                       | 102-123 |
+| 配置加载   | `ktransformers/server/config/config.py`                              | 19-211  |
+| 参数解析   | `ktransformers/server/args.py`                                       | 14-173  |
+| 架构识别   | `ktransformers/server/args.py`                                       | 143-158 |
+| 接口创建   | `ktransformers/server/utils/create_interface.py`                     | 19-31   |
+| 后端初始化 | `ktransformers/server/backend/interfaces/ktransformers.py`           | 27-79   |
+| 模型注册   | `ktransformers/local_chat.py`                                        | 36-42   |
+| 规则映射   | `ktransformers/local_chat.py`                                        | 46-52   |
+| 模型实现   | `ktransformers/models/modeling_qwen2_moe.py`                         | 1-1766  |
+| 优化规则   | `ktransformers/optimize/optimize_rules/Qwen2-57B-A14B-Instruct.yaml` | 1-68    |
+| 静态缓存   | `ktransformers/models/custom_cache.py`                               | 18-120  |
 
 ### 1.5 关键设计要点
 
@@ -337,7 +347,7 @@ with torch.device("meta"):
 ```
 
 - **Meta 设备**: PyTorch 的虚拟设备，创建张量时不分配实际内存
-- **优势**: 
+- **优势**:
   - 允许在不占用 GPU 显存的情况下构建完整模型结构
   - 后续通过 `optimize_and_load_gguf()` 逐层替换算子并加载权重到实际设备
   - 对于大模型（如 Qwen2MoE-57B）至关重要，避免初始化时显存溢出
@@ -362,7 +372,7 @@ default_optimize_rules = {
   2. 在 `custom_models` 注册
   3. 创建对应的 YAML 优化规则
   4. 在 `default_optimize_rules` 注册规则路径
-  
+
 #### 1.5.3 架构自动识别机制
 
 系统通过两个步骤识别模型架构：
@@ -371,6 +381,7 @@ default_optimize_rules = {
 2. **接口初始化阶段**（`ktransformers.py:33-49`）: 再次读取配置并匹配注册表
 
 这种双重验证确保了：
+
 - 命令行参数 `--architectures` 与实际模型配置一致
 - 显存预算计算准确（基于实际模型配置）
 - 后端能找到对应的模型类和优化规则
@@ -396,27 +407,27 @@ def optimize_and_load_gguf(
     # 步骤 1: 加载 YAML 规则
     with open(rule_file, 'r', encoding='utf-8') as f:
         rule_list = yaml.load(f.read(), Loader=yaml.FullLoader)  # 行 119
-    
+
     # 步骤 2: 生成优化配置（遍历模型并匹配规则）
     optimize_config = dict()
     gen_optimize_config(module, optimize_config, rule_list, default_device=default_device)  # 行 122
-    
+
     # 步骤 3: 配置转换（处理特殊模型）
     model_config = translate_model_config(model_config)  # 行 124
-    
+
     # 步骤 4: 创建 GGUF 加载器
     weights_loader = ModelLoaderFactory.create_loader(gguf_path)  # 行 126
-    
+
     # 步骤 5: 注入自定义算子（仍在 meta 设备）
     with torch.device("meta"):
         inject(module, optimize_config, model_config, weights_loader)  # 行 128
-    
+
     # 步骤 6: 预加载 lm_head（因为输出层通常很大）
     load_weights(module.lm_head, weights_loader, "lm_head.", device=default_device)  # 行 130
-    
+
     # 步骤 7: 加载所有权重到实际设备
     load_weights(module, weights_loader, device=default_device)  # 行 131
-    
+
     # 步骤 8: 保存加载器引用并清理 meta 张量
     module.gguf_loader = weights_loader  # 行 132
     del_meta(module)  # 行 133
@@ -441,15 +452,15 @@ YAML 规则定义了哪些模块需要替换为自定义算子，以 Qwen2MoE �
 
 # 规则 2: 替换线性层（量化支持）
 - match:
-    name: "^model\\.layers\\..*$"          # 正则表达式匹配所有层内的线性层
+    name: "^model\\.layers\\..*$" # 正则表达式匹配所有层内的线性层
     class: torch.nn.Linear
   replace:
     class: ktransformers.operators.linear.KTransformersLinear
     kwargs:
       generate_device: "cuda"
       prefill_device: "cuda"
-      generate_op: "KLinearMarlin"         # 生成阶段使用 Marlin 量化 kernel
-      prefill_op: "KLinearTorch"           # 预填充阶段使用 Torch 实现
+      generate_op: "KLinearMarlin" # 生成阶段使用 Marlin 量化 kernel
+      prefill_op: "KLinearTorch" # 预填充阶段使用 Torch 实现
 
 # 规则 3: 替换 lm_head
 - match:
@@ -481,10 +492,10 @@ YAML 规则定义了哪些模块需要替换为自定义算子，以 Qwen2MoE �
     kwargs:
       prefill_device: "cuda"
       prefill_op: "KExpertsTorch"
-      generate_device: "cpu"               # 生成阶段在 CPU 执行
+      generate_device: "cpu" # 生成阶段在 CPU 执行
       generate_op: "KExpertsCPU"
-      out_device: "cuda"                   # 输出返回 GPU
-  recursive: False                         # 不递归处理子模块
+      out_device: "cuda" # 输出返回 GPU
+  recursive: False # 不递归处理子模块
 ```
 
 ### 2.3 规则匹配与配置生成
@@ -503,11 +514,11 @@ def gen_optimize_config(
 ):
     module_name = prefix[:-1]   # 去除末尾的 "."
     recursive = True            # 默认递归处理子模块
-    
+
     # 遍历所有规则，尝试匹配当前模块
     for rule in rule_list:
         match_meta = rule["match"]
-        
+
         # 匹配条件 1: 类型匹配
         if "class" in match_meta:
             # 动态导入并检查 isinstance
@@ -515,12 +526,12 @@ def gen_optimize_config(
             module_cls = getattr(__import__(...), import_path[-1])
             if not isinstance(module, module_cls):
                 continue  # 类型不匹配，尝试下一条规则
-        
+
         # 匹配条件 2: 名称匹配（正则表达式）
         if "name" in match_meta:
             if re.search(match_meta["name"], module_name) is None:
                 continue  # 名称不匹配，尝试下一条规则
-        
+
         # 匹配成功，应用替换配置
         if "replace" in rule:
             replace_meta = rule["replace"]
@@ -529,12 +540,12 @@ def gen_optimize_config(
                 "class": replace_meta.get("class", "default"),  # 替换类
                 "kwargs": copy.deepcopy(replace_meta.get("kwargs", {}))  # 参数
             }
-        
+
         # 检查是否需要递归
         if "recursive" in rule:
             recursive = bool(rule["recursive"])
         break  # 匹配到第一条规则后停止
-    
+
     # 如果没有匹配任何规则，使用默认配置
     if module_name not in out_data:
         out_data[module_name] = {
@@ -545,7 +556,7 @@ def gen_optimize_config(
                 "prefill_device": default_device
             }
         }
-    
+
     # 递归处理子模块
     if recursive:
         for name, child in module._modules.items():
@@ -600,19 +611,19 @@ def inject(
     for name, child in module._modules.items():
         if child is not None:
             child_prefix = prefix + name
-            
+
             # 检查当前模块是否需要替换
             if child_prefix in local_optimization_dict:
                 inject_module_meta = local_optimization_dict[child_prefix]
-                
+
                 if inject_module_meta["class"] != "default":
                     # 动态导入自定义算子类
                     import_path = inject_module_meta["class"].split(".")
                     module_cls = getattr(__import__(...), import_path[-1])
-                    
+
                     # 记录设备映射到 gguf_loader
                     gguf_loader.tensor_device_map[inject_module_meta["key"]] = inject_module_meta["kwargs"]
-                    
+
                     # 实例化自定义算子
                     inject_module = module_cls(
                         key=inject_module_meta["key"],
@@ -621,20 +632,20 @@ def inject(
                         orig_module=child,              # 传入原始模块用于参数推断
                         **inject_module_meta["kwargs"]
                     )
-                    
+
                     # 替换模块
                     set_module(module, name, inject_module)
                     print(f"Injecting {child_prefix} as {inject_module_meta['class']}")
-                
+
                 elif inject_module_meta["class"] == "default":
                     # 保持原始模块，但记录设备映射
                     print(f"Injecting {child_prefix} as default")
                     gguf_loader.tensor_device_map[inject_module_meta["key"]] = inject_module_meta["kwargs"]
-                
+
                 # 递归处理子模块
                 child_prefix += "."
                 child_optimization_dict = {
-                    k: v for k, v in local_optimization_dict.items() 
+                    k: v for k, v in local_optimization_dict.items()
                     if k.startswith(child_prefix)
                 }
                 inject(child, child_optimization_dict, model_config, gguf_loader, child_prefix)
@@ -654,7 +665,7 @@ class ModelLoaderFactory:
     def create_loader(file_path: str) -> ModelLoader:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Path not found: {file_path}")
-        
+
         if os.path.isfile(file_path):
             # 单文件情况
             if file_path.endswith('.gguf'):
@@ -666,20 +677,20 @@ class ModelLoaderFactory:
             folder_path = file_path
             gguf_files = []
             safetensor_files = []
-            
+
             for root, _, files in os.walk(folder_path):
                 for file in files:
                     if file.endswith('.gguf'):
                         gguf_files.append(os.path.join(root, file))
                     elif file.endswith('.safetensors'):
                         safetensor_files.append(os.path.join(root, file))
-            
+
             # 优先使用 GGUF
             if gguf_files:
                 return GGUFLoader(folder_path)
             elif safetensor_files:
                 return SafeTensorLoader(folder_path)
-        
+
         raise ValueError(f"No supported model files found in {file_path}")
 ```
 
@@ -702,15 +713,15 @@ def load_weights(
     for name, param in module.named_parameters(recurse=False):
         tensor_key = prefix + name
         gguf_key = translate_name_to_gguf(tensor_key)  # 转换为 GGUF 命名
-        
+
         if loader.has_tensor(gguf_key):
             # 从 GGUF 加载张量
             target_device = get_device(prefix, loader.tensor_device_map)
             tensor = loader.load_tensor(gguf_key, device=target_device)
-            
+
             # 替换参数
             set_param(module, name, tensor)
-    
+
     # 递归处理子模块
     for name, child in module.named_children():
         if child is not None:
@@ -727,6 +738,7 @@ def load_weights(
 **文件**: `ktransformers/operators/linear.py:895-1000`
 
 关键特性：
+
 - **双算子模式**: `prefill_op` 用于预填充（通常 FP16/BF16），`generate_op` 用于生成（量化加速）
 - **支持多种量化**: Marlin (GPTQ/AWQ)、GGUF Q4/Q6/Q8、FP8 等
 - **设备灵活性**: 可为预填充和生成指定不同设备
@@ -748,19 +760,19 @@ class KTransformersLinear(BaseInjectedModule):
         super().__init__(key, gguf_loader, config, orig_module, **kwargs)
         self.generate_device = generate_device
         self.prefill_device = prefill_device
-        
+
         # 根据 generate_op 创建量化算子
         if generate_op == "KLinearMarlin":
             self.generate_linear = MarlinLinear(...)
         elif generate_op == "KLinearTorch":
             self.generate_linear = TorchLinear(...)
         # ... 其他算子类型
-        
+
         # 根据 prefill_op 创建预填充算子
         if prefill_op == "KLinearTorch":
             self.prefill_linear = TorchLinear(...)
         # ...
-    
+
     def forward(self, hidden_states, *args, **kwargs):
         # 根据输入形状判断阶段
         if hidden_states.shape[1] == 1:
@@ -776,6 +788,7 @@ class KTransformersLinear(BaseInjectedModule):
 **文件**: `ktransformers/operators/experts.py:1581-1700`
 
 关键特性：
+
 - **CPU 生成模式**: 在生成阶段将专家权重放在 CPU 上，节省 GPU 显存
 - **动态路由**: 根据 gate logits 选择 top-k 专家
 - **批量推理优化**: 合并同一专家的多个 token 以提高效率
@@ -796,21 +809,21 @@ class KTransformersExperts(BaseInjectedModule):
         **kwargs
     ):
         super().__init__(key, gguf_loader, config, orig_module, **kwargs)
-        
+
         # 加载专家权重
         experts_data = gguf_loader.load_experts(key, device=generate_device)
-        
+
         # 根据量化类型创建专家算子
         if generate_op == "KExpertsCPU":
             self.generate_experts = CPUExpertKernel(experts_data, ...)
         elif generate_op == "KExpertsTorch":
             self.generate_experts = TorchExpertKernel(experts_data, ...)
         # ...
-    
+
     def forward(self, hidden_states, router_logits, *args, **kwargs):
         # 选择 top-k 专家
         routing_weights, selected_experts = torch.topk(router_logits, k=self.top_k)
-        
+
         # 根据阶段选择算子
         if hidden_states.shape[0] == 1:
             # 生成阶段：使用 CPU 专家
@@ -818,7 +831,7 @@ class KTransformersExperts(BaseInjectedModule):
         else:
             # 预填充阶段：使用 GPU 专家
             output = self.prefill_experts(hidden_states, selected_experts, routing_weights)
-        
+
         return output.to(self.out_device)
 ```
 
@@ -842,6 +855,7 @@ class KTransformersExperts(BaseInjectedModule):
 ```
 
 这个映射在以下场景使用：
+
 1. **权重加载**: 确定张量应加载到哪个设备
 2. **前向传播**: 算子根据当前阶段选择对应设备
 3. **缓存创建**: `StaticCache` 为不同层分配不同设备的缓存
@@ -924,12 +938,12 @@ Qwen2MoeForCausalLM
 
 ### 3.4 关键辅助结构
 
-| 成员 / 结构 | 位置 | 作用 |
-|-------------|------|------|
-| `generated_ids` | `ktransformers/server/backend/interfaces/transformers.py:L333-L393` | 统一保存 Prompt 与已生成 token，Prefill/Decode 共享 |
-| `ever_generated_ids` | 同上 | 记录已返回 token，避免采样重复并用于调试 |
-| `Profiler` 计数器 | `transformers.py:L357-L367`、`ktransformers.py:L176-L181` | 统计 prefill / decode 的 token 数与耗时 |
-| `RawUsage` | `ktransformers/server/backend/interfaces/ktransformers.py:L239-L251` | 在推理结束时返回 tokenize、prefill、decode 的耗时与 token 数 |
+| 成员 / 结构          | 位置                                                                 | 作用                                                         |
+| -------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `generated_ids`      | `ktransformers/server/backend/interfaces/transformers.py:L333-L393`  | 统一保存 Prompt 与已生成 token，Prefill/Decode 共享          |
+| `ever_generated_ids` | 同上                                                                 | 记录已返回 token，避免采样重复并用于调试                     |
+| `Profiler` 计数器    | `transformers.py:L357-L367`、`ktransformers.py:L176-L181`            | 统计 prefill / decode 的 token 数与耗时                      |
+| `RawUsage`           | `ktransformers/server/backend/interfaces/ktransformers.py:L239-L251` | 在推理结束时返回 tokenize、prefill、decode 的耗时与 token 数 |
 
 > 对 Qwen2MoE 而言，KV Cache 采用标准四维张量（无 DeepSeek MLA 的分页结构），但仍通过 `cache.cur_idx` 与 `cache_position` 精确控制分块写入。
 
@@ -985,12 +999,20 @@ ThreadContext.work()
 
 ### 5.2 balance_serve 后端差异（Qwen2MoE）
 
-| 维度 | ktransformers 后端 | balance_serve 后端 |
-|------|-------------------|--------------------|
-| **算子与规则** | 默认使用 `Qwen2-57B-A14B-Instruct.yaml`，主要替换线性层、MoE 专家与 `KQwen2MoeSparseMoeBlock`（`optimize_rules/Qwen2-57B-A14B-Instruct.yaml`）。 | 使用 `Qwen2-serve.yaml`，引入 `KQwen2MoeSparseMoeBlockV2`、`KTransformersExpertsV2`，并把整层 self_attn 替换为 `operators.balance_serve_attention.KQwen2MoeAttention`（`optimize_rules/Qwen2-serve.yaml`）。 |
-| **KV Cache 形态** | 预分配的 `StaticCache`（四维张量）驻留在推理进程内，按 `cache_position` 直接写入（`custom_cache.py:44-152`）。 | 依赖分页的 `KGQACache`，由调度器共享页表并通过 `page_idx/page_offset` 访问，估算长度由 `QueryAdd.estimated_length` 控制（`custom_cache.py:296-327`，`balance_serve.py:473-518`）。 |
+| 维度                       | ktransformers 后端                                                                                                                                                         | balance_serve 后端                                                                                                                                                                                                                         |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **算子与规则**             | 默认使用 `Qwen2-57B-A14B-Instruct.yaml`，主要替换线性层、MoE 专家与 `KQwen2MoeSparseMoeBlock`（`optimize_rules/Qwen2-57B-A14B-Instruct.yaml`）。                           | 使用 `Qwen2-serve.yaml`，引入 `KQwen2MoeSparseMoeBlockV2`、`KTransformersExpertsV2`，并把整层 self_attn 替换为 `operators.balance_serve_attention.KQwen2MoeAttention`（`optimize_rules/Qwen2-serve.yaml`）。                               |
+| **KV Cache 形态**          | 预分配的 `StaticCache`（四维张量）驻留在推理进程内，按 `cache_position` 直接写入（`custom_cache.py:44-152`）。                                                             | 依赖分页的 `KGQACache`，由调度器共享页表并通过 `page_idx/page_offset` 访问，估算长度由 `QueryAdd.estimated_length` 控制（`custom_cache.py:296-327`，`balance_serve.py:473-518`）。                                                         |
 | **FlashInfer / Attention** | Prefill 过程中按 chunk 调用 `MLAWrapperSingleton` 规划并在末尾 `reset_buffer()`，Decode 强制使用 FlashAttention2（`ktransformers.py:203-228`，`ktransformers.py:45-47`）。 | `ModelRunner.model_attn_plan()` 会为批次生成 FlashInfer 计划并缓存到 CUDA Graph，`KQwen2MoeAttention` 直接对接 `BatchMLAPagedAttentionWrapper` 以处理分页 KV（`balance_serve_attention.py:65-118`，`model_runner.py:93-152`、`200-221`）。 |
-| **调度与 Token 流** | 单实例串行：`ThreadContext` 通过 `asyncio.Lock` 与 `generated_ids` 管理单用户流水（`ktransformers.py:239-244`，`transformers.py:395-422`）。 | 多进程协同：前端进程把查询包装成 `QueryAdd` 发送给调度器，模型进程批量执行，再通过 `Queue` + ZeroMQ 广播 token，`queue_proxy()` 把 token 派发给各个请求（`balance_serve.py:422-509`）。 |
-| **结束清退** | 流程见 5.1：消息状态与 `RawUsage` 由同一进程回传。 | 生成完毕后调用 `report_last_time_performance()` 并推送 `RawUsage`，同时根据 `decode` 计数决定 `finish_reason`（`balance_serve.py:496-523`）。 |
+| **调度与 Token 流**        | 单实例串行：`ThreadContext` 通过 `asyncio.Lock` 与 `generated_ids` 管理单用户流水（`ktransformers.py:239-244`，`transformers.py:395-422`）。                               | 多进程协同：前端进程把查询包装成 `QueryAdd` 发送给调度器，模型进程批量执行，再通过 `Queue` + ZeroMQ 广播 token，`queue_proxy()` 把 token 派发给各个请求（`balance_serve.py:422-509`）。                                                    |
+| **结束清退**               | 流程见 5.1：消息状态与 `RawUsage` 由同一进程回传。                                                                                                                         | 生成完毕后调用 `report_last_time_performance()` 并推送 `RawUsage`，同时根据 `decode` 计数决定 `finish_reason`（`balance_serve.py:496-523`）。                                                                                              |
 
 > 结论：balance_serve 在 Qwen2MoE 场景下通过“调度器 + 分页 KV + FlashInfer + CUDA Graph”追求多会话吞吐，而原生 ktransformers 后端则偏向单实例 prompt 复用与低延迟流水。两者共享 GGUF 注入体系，但算子实现、缓存形态和 token 派发路径都有显著不同。
+
+# Gemini CLI Vertex AI Config
+
+export GOOGLE_APPLICATION_CREDENTIALS="/root/gemini-runner.json"
+export GOOGLE_CLOUD_PROJECT="crack-willow-475720-p0"
+export GOOGLE_CLOUD_LOCATION="us-central1"
+unset GOOGLE_API_KEY
+unset GEMINI_API_KEY

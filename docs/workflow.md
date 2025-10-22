@@ -4,24 +4,34 @@
 
 ### 1.1 服务入口：加载全局配置并解析 CLI
 - `main()` 先实例化全局单例配置 `Config()`，随后构造 `ArgumentParser` 以当前配置为默认值并解析命令行参数（`ktransformers/server/main.py:103`）。
+
 - `ArgumentParser.parse_args()` 会将 CLI 与 `config.yaml` 中的默认值融合：校准模型路径、设备、最大 batch、KV cache 等配置，并根据实际模型重新计算 `args.architectures` / `args.gpu_memory_size`（`ktransformers/server/args.py:144`、`ktransformers/server/args.py:155`）。
+
 - `parse_args()` 还会预留 Balance Serve 需要的内部端口（调度和监控端口），并把所有解析结果写回单例 `Config()`，确保后续模块（含子进程）可直接读取统一的运行参数（`ktransformers/server/args.py:161`–`ktransformers/server/args.py:171`）。
 
 ### 1.2 选择后端并构造推理接口
 - 完成参数解析后，`create_interface()` 通过 `config.backend_type` 选择具体后端实现。当值为 `balance_serve` 时，实例化 `BalanceServeInterface` 并将其挂载到 `GlobalInterface`，同时初始化线程上下文管理器（`ktransformers/server/utils/create_interface.py:19`–`ktransformers/server/utils/create_interface.py:31`）。
+
 - 此时传入的 `default_args` 本质上是刚刚更新过的全局 `Config()`，因此 `BalanceServeInterface` 能直接访问 CLI/配置文件里与 Qwen3MoE 相关的所有超参（模型目录、GGUF 路径、page size 等）。
 
 ### 1.3 BalanceServeInterface 初始化：父进程组件注册
 - 初始化阶段首先建立推理输出的跨进程通信结构：为每个请求准备 `asyncio.Queue` 映射，并创建一个 `multiprocessing.Queue` 用于回收 token（`ktransformers/server/backend/interfaces/balance_serve.py:332`–`ktransformers/server/backend/interfaces/balance_serve.py:349`）。
+
 - 立即加载与模型配套的 `AutoTokenizer`，以保证后续请求能够同步分词规则（`ktransformers/server/backend/interfaces/balance_serve.py:340`）。
+
 - 启动 Balance Serve 的核心推理子进程：利用 `multiprocessing.get_context("spawn")` 拉起 `run_engine(...)`，并通过事件 `kvcache_event` 与父进程同步模型加载完成状态（`ktransformers/server/backend/interfaces/balance_serve.py:347`–`ktransformers/server/backend/interfaces/balance_serve.py:350`）。
+
 - 为负载调度与 KV cache 管理启动独立的 RPC 进程：将当前 `args` 序列化后传给 `sched_rpc.py`，该进程会根据模型架构选择对应的调度配置生成函数（`ktransformers/server/backend/interfaces/balance_serve.py:353`–`ktransformers/server/backend/interfaces/balance_serve.py:366`、`ktransformers/server/balance_serve/sched_rpc.py:206`–`ktransformers/server/balance_serve/sched_rpc.py:224`）。
+
 - `BalanceServeInterface` 还会在 FastAPI 生命周期里注册 `queue_proxy`，负责把子进程返回的 token 推送到每个请求的 `asyncio.Queue` 中（`ktransformers/server/backend/interfaces/balance_serve.py:417`–`ktransformers/server/backend/interfaces/balance_serve.py:438`）。
 
 ### 1.4 子进程 Engine：模型与缓存的实际装载
 - `run_engine()` 内部实例化 `Engine`，并在需要时执行 CUDA Graph 预热（`ktransformers/server/backend/interfaces/balance_serve.py:307`–`ktransformers/server/backend/interfaces/balance_serve.py:313`）。
+
 - `Engine.__init__()` 将父进程解析好的各项参数重新写入 `Config()` 单例，以便子进程也能访问统一配置（`ktransformers/server/backend/interfaces/balance_serve.py:123`–`ktransformers/server/backend/interfaces/balance_serve.py:129`）。
+
 - 针对 Qwen3MoE，Engine 会专用地加载 `Qwen3MoeConfig`，并在 `torch.device("meta")` 环境下构造 `KGQACache` 与定制模型 `KQwen3MoeForCausalLM`，避免显存占用并与 Balance Serve 的批次调度兼容（`ktransformers/server/backend/interfaces/balance_serve.py:137`–`ktransformers/server/backend/interfaces/balance_serve.py:179`）。
+
 - 如果模型目录中提供了 `generation_config.json`，会作为推理默认值加载；否则按照 CLI 参数临时生成一个采样配置（`ktransformers/server/backend/interfaces/balance_serve.py:191`–`ktransformers/server/backend/interfaces/balance_serve.py:199`）。
 
 ### 1.5 GGUF 注入与算子初始化
