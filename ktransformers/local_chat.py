@@ -1,8 +1,8 @@
 """
-Description  :  
+Description  :
 Author       : Boxin Zhang, Azure-Tang
 Version      : 0.1.0
-Copyright (c) 2024 by KVCache.AI, All Rights Reserved. 
+Copyright (c) 2024 by KVCache.AI, All Rights Reserved.
 """
 
 import os
@@ -28,7 +28,14 @@ from ktransformers.models.modeling_qwen2_moe import Qwen2MoeForCausalLM
 from ktransformers.models.modeling_deepseek_v3 import DeepseekV3ForCausalLM
 from ktransformers.models.modeling_llama import LlamaForCausalLM
 from ktransformers.models.modeling_mixtral import MixtralForCausalLM
-from ktransformers.util.utils import prefill_and_generate, get_compute_capability, xpu_fp16_model
+from ktransformers.models.custom_modeling_qwen3_moe_static import (
+    KQwen3MoeForCausalLMStatic,
+)
+from ktransformers.util.utils import (
+    prefill_and_generate,
+    get_compute_capability,
+    xpu_fp16_model,
+)
 from ktransformers.server.config.config import Config
 from ktransformers.operators.flashinfer_wrapper import flashinfer_enabled
 from ktransformers.util.vendors import device_manager, get_device, to_device, GPUVendor
@@ -37,6 +44,7 @@ custom_models = {
     "DeepseekV2ForCausalLM": DeepseekV2ForCausalLM,
     "DeepseekV3ForCausalLM": DeepseekV3ForCausalLM,
     "Qwen2MoeForCausalLM": Qwen2MoeForCausalLM,
+    "Qwen3MoeForCausalLM": KQwen3MoeForCausalLMStatic,
     "LlamaForCausalLM": LlamaForCausalLM,
     "MixtralForCausalLM": MixtralForCausalLM,
 }
@@ -48,6 +56,7 @@ default_optimize_rules = {
     "DeepseekV2ForCausalLM": ktransformer_rules_dir + "DeepSeek-V2-Chat.yaml",
     "DeepseekV3ForCausalLM": ktransformer_rules_dir + "DeepSeek-V3-Chat.yaml",
     "Qwen2MoeForCausalLM": ktransformer_rules_dir + "Qwen2-57B-A14B-Instruct.yaml",
+    "Qwen3MoeForCausalLM": ktransformer_rules_dir + "Qwen3Moe-ktransformers.yaml",
     "LlamaForCausalLM": ktransformer_rules_dir + "Internlm2_5-7b-Chat-1m.yaml",
     "MixtralForCausalLM": ktransformer_rules_dir + "Mixtral.yaml",
 }
@@ -60,13 +69,12 @@ def local_chat(
     max_new_tokens: int = 1000,
     cpu_infer: int = Config().cpu_infer,
     use_cuda_graph: bool = True,
-    prompt_file : str | None = None,
+    prompt_file: str | None = None,
     mode: str = "normal",
     force_think: bool = False,
     chunk_size: int = 8192,
-    device: str = "cuda"
+    device: str = "cuda",
 ):
-
     torch.set_grad_enabled(False)
 
     Config().cpu_infer = cpu_infer
@@ -76,8 +84,10 @@ def local_chat(
 
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
-    if mode == 'long_context':
-        assert config.architectures[0] == "LlamaForCausalLM", "only LlamaForCausalLM support long_context mode"
+    if mode == "long_context":
+        assert config.architectures[0] == "LlamaForCausalLM", (
+            "only LlamaForCausalLM support long_context mode"
+        )
         torch.set_default_dtype(torch.float16)
     # elif xpu_fp16_model(config):
     #     # using FP16 may cause accuracy issues, triggering core dumped during runtime
@@ -90,7 +100,8 @@ def local_chat(
             print("using custom modeling_xxx.py.")
             if (
                 "Qwen2Moe" in config.architectures[0]
-            ):  # Qwen2Moe must use flash_attention_2 to avoid overflow.
+                or "Qwen3Moe" in config.architectures[0]
+            ):  # Qwen MoE must use flash_attention_2 to avoid overflow.
                 config._attn_implementation = "flash_attention_2"
             if "Llama" in config.architectures[0]:
                 config._attn_implementation = "eager"
@@ -121,17 +132,15 @@ def local_chat(
         gguf_path = input(
             "please input the path of your gguf file(gguf file in the dir containing input gguf file must all belong to current model):"
         )
-    optimize_and_load_gguf(model, optimize_config_path, gguf_path, config, default_device=device)
-    
+    optimize_and_load_gguf(
+        model, optimize_config_path, gguf_path, config, default_device=device
+    )
+
     try:
         model.generation_config = GenerationConfig.from_pretrained(model_path)
     except Exception as e:
         print(f"generation config can't auto create, make default. Message: {e}")
-        gen_config = GenerationConfig(
-            temperature=0.6,
-            top_p=0.95,
-            do_sample=True
-        )
+        gen_config = GenerationConfig(temperature=0.6, top_p=0.95, do_sample=True)
         model.generation_config = gen_config
     # model.generation_config = GenerationConfig.from_pretrained(model_path)
     if model.generation_config.pad_token_id is None:
@@ -168,28 +177,58 @@ def local_chat(
                 content = "Please write a piece of quicksort code in C++."
         elif os.path.isfile(content):
             content = open(content, "r").read()
-            
+
         messages = [{"role": "user", "content": content}]
         input_tensor = tokenizer.apply_chat_template(
             messages, add_generation_prompt=True, return_tensors="pt"
         )
         if force_think:
-            token_thinks = torch.tensor([tokenizer.encode("<think>\\n",add_special_tokens=False)],device=input_tensor.device)
-            input_tensor = torch.cat(
-                [input_tensor, token_thinks], dim=1
+            token_thinks = torch.tensor(
+                [tokenizer.encode("<think>\\n", add_special_tokens=False)],
+                device=input_tensor.device,
             )
-        if mode == 'long_context':
-            assert Config().long_context_config['max_seq_len'] > input_tensor.shape[1] + max_new_tokens, \
-            "please change max_seq_len in  ~/.ktransformers/config.yaml"
-        
-        if system != "Windows" and (config.architectures[0] == "DeepseekV2ForCausalLM" or config.architectures[0] == "DeepseekV3ForCausalLM") and flashinfer_enabled and get_compute_capability() >= 8 and device_manager.gpu_vendor == GPUVendor.NVIDIA:
+            input_tensor = torch.cat([input_tensor, token_thinks], dim=1)
+        if mode == "long_context":
+            assert (
+                Config().long_context_config["max_seq_len"]
+                > input_tensor.shape[1] + max_new_tokens
+            ), "please change max_seq_len in  ~/.ktransformers/config.yaml"
+
+        if (
+            system != "Windows"
+            and (
+                config.architectures[0] == "DeepseekV2ForCausalLM"
+                or config.architectures[0] == "DeepseekV3ForCausalLM"
+            )
+            and flashinfer_enabled
+            and get_compute_capability() >= 8
+            and device_manager.gpu_vendor == GPUVendor.NVIDIA
+        ):
             generated = prefill_and_generate(
-                model, tokenizer, input_tensor.to(device), max_new_tokens, use_cuda_graph, mode = mode, force_think = force_think, chunk_size = chunk_size,
-                use_flashinfer_mla = True, num_heads = config.num_attention_heads, head_dim_ckv = config.kv_lora_rank, head_dim_kpe = config.qk_rope_head_dim, q_head_dim = config.qk_rope_head_dim + config.qk_nope_head_dim
+                model,
+                tokenizer,
+                input_tensor.to(device),
+                max_new_tokens,
+                use_cuda_graph,
+                mode=mode,
+                force_think=force_think,
+                chunk_size=chunk_size,
+                use_flashinfer_mla=True,
+                num_heads=config.num_attention_heads,
+                head_dim_ckv=config.kv_lora_rank,
+                head_dim_kpe=config.qk_rope_head_dim,
+                q_head_dim=config.qk_rope_head_dim + config.qk_nope_head_dim,
             )
         else:
             generated = prefill_and_generate(
-                model, tokenizer, input_tensor.to(device), max_new_tokens, use_cuda_graph, mode = mode, force_think = force_think, chunk_size = chunk_size,
+                model,
+                tokenizer,
+                input_tensor.to(device),
+                max_new_tokens,
+                use_cuda_graph,
+                mode=mode,
+                force_think=force_think,
+                chunk_size=chunk_size,
             )
 
 

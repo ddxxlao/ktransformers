@@ -29,10 +29,29 @@ git checkout -b support-qwen3moe
     2. 执行 `optimize_and_load_gguf`，按照 YAML 将各层替换成 `KTransformersLinear`、`KTransformersExpertsV2` 等注入算子，并把 `model` 换成 `KQwen3MoeModel`。
     3. 运行时所有 `self.model(...)` 调用都会落到 `KQwen3MoeModel.forward()`，它负责 per-layer `set_inference_mode`，从而触发 CPU/GPU 专家装载与卸载。
     4. 因为规则和调度逻辑都与 Qwen2 保持一致，只要在 YAML 中写入与 Qwen2 相同的 `generate_device`/`generate_op` 等参数，就能和之前一样用 CPU 解码并把专家常驻 CPU RAM。
-  2.  注册新模型: 在 ktransformers/local_chat.py 文件中：
-      - 导入你新创建的 KQwen3MoeForCausalLMStatic 模型类。
-      - 在 custom_models 字典中，添加一个条目，将 "Qwen3MoeForCausalLM" 字符串映射到 KQwen3MoeForCausalLMStatic 类。
+  2.  注册新模型: 注册改动
+  - ktransformers/local_chat.py:31-125 引入 KQwen3MoeForCausalLMStatic，把
+    Qwen3MoeForCausalLM 注册到 custom_models，并在 default_optimize_rules 里为其预
+    留 Qwen3Moe-ktransformers.yaml；同一段逻辑把 “Qwen2/3Moe” 的注意力实现统一切换
+    为 flash_attention_2。
+  - ktransformers/local_chat_test.py:31-108 同步测试版 CLI 的自定义模型表与默
+    认规则，确保测试入口与正式入口一致，也在长文本提示里提醒 Qwen MoE 默认用
+    flash_attention_2。
+  - ktransformers/server/backend/interfaces/ktransformers.py:36-90 服务端接口加载时
+    识别 Qwen3MoeForCausalLM，沿用自定义建模类并强制 flash_attention_2，保证推理端
+    与 CLI 的注册保持一致。
 
+  单元测试
+  - ktransformers/tests/unit/test_qwen3moe_backend.py:35-389 新增 7 个单测，分别
+    校验运行态/测试态注册表、接口初始化时的注意力实现，以及 KQwen3MoeModel 在缓
+    存推进、阈值卸载和 load_layer_to 切换推理模式时的行为；文件顶部通过桩模块隔离
+    flashinfer、prefill wrapper 与用户目录依赖，方便在 CI/CPU 环境执行。
+
+  验证与后续
+  - 已在本地执行 pytest ktransformers/tests/unit/test_qwen3moe_backend.py，所有用例
+    通过。
+  - 仍需后续补充真实的 ktransformers/optimize/optimize_rules/Qwen3Moe-
+    ktransformers.yaml 以及结合真算子/权重的端到端验证。
   3.  配置注意力实现: 在 ktransformers/server/backend/interfaces/ktransformers.py 的初始化部分，为 Qwen3MoE 模型强制设置 config.\_attn_implementation =
       "flash_attention_2"，这对于避免数值溢出至关重要。
 

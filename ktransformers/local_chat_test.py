@@ -28,6 +28,9 @@ from ktransformers.models.modeling_qwen2_moe import Qwen2MoeForCausalLM
 from ktransformers.models.modeling_deepseek_v3 import DeepseekV3ForCausalLM
 from ktransformers.models.modeling_llama import LlamaForCausalLM
 from ktransformers.models.modeling_mixtral import MixtralForCausalLM
+from ktransformers.models.custom_modeling_qwen3_moe_static import (
+    KQwen3MoeForCausalLMStatic,
+)
 from ktransformers.util.utils import prefill_and_generate, get_compute_capability
 from ktransformers.server.config.config import Config
 from ktransformers.operators.flashinfer_wrapper import flashinfer_enabled
@@ -36,6 +39,7 @@ custom_models = {
     "DeepseekV2ForCausalLM": DeepseekV2ForCausalLM,
     "DeepseekV3ForCausalLM": DeepseekV3ForCausalLM,
     "Qwen2MoeForCausalLM": Qwen2MoeForCausalLM,
+    "Qwen3MoeForCausalLM": KQwen3MoeForCausalLMStatic,
     "LlamaForCausalLM": LlamaForCausalLM,
     "MixtralForCausalLM": MixtralForCausalLM,
 }
@@ -47,6 +51,7 @@ default_optimize_rules = {
     "DeepseekV2ForCausalLM": ktransformer_rules_dir + "DeepSeek-V2-Chat.yaml",
     "DeepseekV3ForCausalLM": ktransformer_rules_dir + "DeepSeek-V3-Chat.yaml",
     "Qwen2MoeForCausalLM": ktransformer_rules_dir + "Qwen2-57B-A14B-Instruct.yaml",
+    "Qwen3MoeForCausalLM": ktransformer_rules_dir + "Qwen3Moe-ktransformers.yaml",
     "LlamaForCausalLM": ktransformer_rules_dir + "Internlm2_5-7b-Chat-1m.yaml",
     "MixtralForCausalLM": ktransformer_rules_dir + "Mixtral.yaml",
 }
@@ -82,7 +87,8 @@ def local_chat(
             print("using custom modeling_xxx.py.")
             if (
                 "Qwen2Moe" in config.architectures[0]
-            ):  # Qwen2Moe must use flash_attention_2 to avoid overflow.
+                or "Qwen3Moe" in config.architectures[0]
+            ):  # Qwen MoE 使用 flash_attention_2 以避免溢出
                 config._attn_implementation = "flash_attention_2"
             if "Llama" in config.architectures[0]:
                 config._attn_implementation = "eager"
