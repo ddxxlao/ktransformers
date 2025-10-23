@@ -242,4 +242,139 @@ cuda_graph_idx)
   只在 balance_serve 路径里使用它们。后续步骤就是在 Qwen3Moe-ktransformers.yaml 中
   移除这两条 match/replace 规则，并验证推理是否正常。
 
-- **Q3**
+## KV Cache 与静态缓存适配
+
+### Q1:
+
+我正在实施让单线程后端 ktransformer 支持最新的Qwen3MoE系列模型的重构，首先我想让你阅读我们总结的工作流 @/docs/single_workflow.md 明白单线程后端加载模型和推理运算的全部流程。再之后，请你阅读我们的实施计划 @/docs/Implement.md 。我们已经完成了KQwen3MoeForCausalLMStatic和KQwen3MoeModel类，并在@ktransformers/local_chat.py中实现了对Qwen3MoeForCausalLM的注册。我已经完成了一份针对单线程后端的优化规则的Qwen3Moe-ktransformers.yaml文件，位置在 @ktransformers/optimize/optimize_rules/Qwen3Moe-ktransformers.yaml
+由于ktransformer单线程后端使用StaticCache ，请你判断是否能够正确地为 Qwen3MoE 模型分配和管理缓存。
+
+- 问题: StaticCache 的实现需要确认能处理 Qwen3MoE 的特定配置（如 KV 头数量、维度等）。
+- 修改内容:
+  1.  检查缓存形状: 在 ktransformers/models/custom_cache.py 中，检查 StaticCache 的 cache_shape 计算逻辑是否能正确处理 Qwen3MoE 的 config.num_key_value_heads 和
+      head_dim。如果需要，添加一个专门的分支来处理 Qwen3 的特殊情况。
+  2.  确保接口兼容: 确认新的模型封装和算子在 forward 过程中调用的是 past_key_values.update 方法来写入缓存，而不是 balance_serve 特有的接口。
+
+## Debugging
+
+Q1: 我正在实施让单线程后端 ktransformer 支持最新的Qwen3MoE系列模型的重构，首先我想让你阅读我们总结的工作流 @/docs/single_workflow.md 明白单线程后端加载模型和推理运算的全部流程。再之后，请你阅读我们的实施计划 @/docs/Implement.md 了解我们已经进行的改动 。我们已经完成了KQwen3MoeForCausalLMStatic和KQwen3MoeModel类，并在@ktransformers/local_chat.py中实现了对Qwen3MoeForCausalLM的注册。我已经完成了一份针对单线程后端的优化规则的Qwen3Moe-ktransformers.yaml文件，位置在 @ktransformers/optimize/optimize_rules/Qwen3Moe-ktransformers.yaml。现在，我进入了debug阶段，需要开始对代码进行整体调试，我的运行命令如下：
+python ktransformers/server/main.py \
+ --model_name Qwen3MoeForCausalLM \
+ --model_path /workspace/data/models/qwen3moe \
+ --gguf_path /workspace/data/models/qwen3moe-gguf/2507/q8 \
+ --optimize_config_path ktransformers/optimize/optimize_rules/Qwen3Moe-ktransformers.yaml \
+ --backend_type ktransformers
+我们服务器已经能够成功启动，进入监听状态，但是在有输入token进入时，出现了崩溃
+
+错误如下：
+Traceback (most recent call last):
+File "/opt/conda/lib/python3.11/site-packages/uvicorn/protocols/http/h11_impl.py", line 403, in run_asgi
+result = await app( # type: ignore[func-returns-value]
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in **call**
+return await self.app(scope, receive, send)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/fastapi/applications.py", line 1133, in **call**
+await super().**call**(scope, receive, send)
+File "/opt/conda/lib/python3.11/site-packages/starlette/applications.py", line 113, in **call**
+await self.middleware_stack(scope, receive, send)
+File "/opt/conda/lib/python3.11/site-packages/starlette/middleware/errors.py", line 186, in **call**
+raise exc
+File "/opt/conda/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in **call**
+await self.app(scope, receive, \_send)
+File "/opt/conda/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in **call**
+await self.app(scope, receive, send)
+File "/opt/conda/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 63, in **call**
+await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+File "/opt/conda/lib/python3.11/site-packages/starlette/\_exception_handler.py", line 53, in wrapped_app
+raise exc
+File "/opt/conda/lib/python3.11/site-packages/starlette/\_exception_handler.py", line 42, in wrapped_app
+await app(scope, receive, sender)
+File "/opt/conda/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in **call**
+await self.app(scope, receive, send)
+File "/opt/conda/lib/python3.11/site-packages/starlette/routing.py", line 716, in **call**
+await self.middleware_stack(scope, receive, send)
+File "/opt/conda/lib/python3.11/site-packages/starlette/routing.py", line 736, in app
+await route.handle(scope, receive, send)
+File "/opt/conda/lib/python3.11/site-packages/starlette/routing.py", line 290, in handle
+await self.app(scope, receive, send)
+File "/opt/conda/lib/python3.11/site-packages/fastapi/routing.py", line 123, in app
+await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+File "/opt/conda/lib/python3.11/site-packages/starlette/\_exception_handler.py", line 53, in wrapped_app
+raise exc
+File "/opt/conda/lib/python3.11/site-packages/starlette/\_exception_handler.py", line 42, in wrapped_app
+await app(scope, receive, sender)
+File "/opt/conda/lib/python3.11/site-packages/fastapi/routing.py", line 110, in app
+await response(scope, receive, send)
+File "/opt/conda/lib/python3.11/site-packages/starlette/responses.py", line 270, in **call**
+with collapse_excgroups():
+File "/opt/conda/lib/python3.11/contextlib.py", line 158, in **exit**
+self.gen.throw(typ, value, traceback)
+File "/opt/conda/lib/python3.11/site-packages/starlette/\_utils.py", line 85, in collapse_excgroups
+raise exc
+File "/opt/conda/lib/python3.11/site-packages/starlette/responses.py", line 274, in wrap
+await func()
+File "/opt/conda/lib/python3.11/site-packages/starlette/responses.py", line 254, in stream_response
+async for chunk in self.body_iterator:
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/schemas/assistants/streaming.py", line 80, in check_client_link
+async for event in async_events:
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/schemas/assistants/streaming.py", line 93, in to_stream_reply
+async for event in async_events:
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/schemas/assistants/streaming.py", line 87, in add_done
+async for event in async_events:
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/schemas/assistants/streaming.py", line 107, in filter_chat_chunk
+async for event in async_events:
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/api/openai/endpoints/chat.py", line 266, in inner
+async for res in interface.inference(input_message, id, create.temperature, create.top_p, create.max_tokens, create.max_completion_tokens):
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/ktransformers.py", line 290, in inference
+async for v in super().inference(
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/transformers.py", line 466, in inference
+for t in self.prefill(input_ids, self.check_is_new(thread_id), temperature, top_p, max_tokens, max_completion_tokens):
+File "/opt/conda/lib/python3.11/site-packages/torch/utils/\_contextlib.py", line 36, in generator_context
+response = gen.send(None)
+^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/ktransformers.py", line 258, in prefill
+logits = chunk_prefill(
+^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/ktransformers.py", line 241, in chunk_prefill
+logits = self.model(
+^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in \_wrapped_call_impl
+return self.\_call_impl(*args, \*\*kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in \_call_impl
+return forward_call(*args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/transformers/utils/deprecation.py", line 172, in wrapped_func
+return func(\*args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/models/modeling_qwen3_moe.py", line 1132, in forward
+outputs = self.model(
+^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in \_wrapped_call_impl
+return self.\_call_impl(*args, \*\*kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in \_call_impl
+return forward_call(*args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/operators/models.py", line 374, in forward
+layer_outputs = decoder_layer(
+^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in \_wrapped_call_impl
+return self.\_call_impl(\*args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in \_call_impl
+return forward_call(*args, \*\*kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/models/modeling_qwen3_moe.py", line 386, in forward
+hidden_states, self_attn_weights = self.self_attn(
+^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in \_wrapped_call_impl
+return self.\_call_impl(*args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in \_call_impl
+return forward_call(\*args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Qwen3MoeAttention.forward() got an unexpected keyword argument 'position_ids'
+
+请你定位和分析错误来源，告诉我原因

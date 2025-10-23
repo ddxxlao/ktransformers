@@ -12,6 +12,7 @@ import torch.nn as nn
 import transformers
 from transformers import Cache, PretrainedConfig
 from typing import List, Optional, Dict, Any, Tuple
+import warnings
 try:
     from ktransformers.server.balance_serve.settings import sched_ext
 except:
@@ -34,10 +35,19 @@ class StaticCache(transformers.StaticCache):
             The default `dtype` to use when initializing the layer.
     """
 
-    def __init__(self, config: PretrainedConfig, max_batch_size: int, max_cache_len: int, device: torch.device| dict, dtype=None) -> None:
-        Cache.__init__(self)
-        self.max_batch_size = max_batch_size
-        self.max_cache_len = config.max_position_embeddings if max_cache_len is None else max_cache_len
+    def __init__(self, config: PretrainedConfig, max_batch_size: int, max_cache_len: int, device: torch.device| dict, dtype=None, **cache_kwargs) -> None:
+        offloading = cache_kwargs.pop("offloading", False)
+        offload_only_non_sliding = cache_kwargs.pop("offload_only_non_sliding", True)
+        if cache_kwargs:
+            warnings.warn(
+                f"Ignoring unsupported StaticCache kwargs: {list(cache_kwargs.keys())}",
+                RuntimeWarning,
+            )
+
+        Cache.__init__(self, layers=[], offloading=offloading, offload_only_non_sliding=offload_only_non_sliding)
+        config = config.get_text_config(decoder=True)
+        self._max_batch_size = max_batch_size
+        self._max_cache_len = config.max_position_embeddings if max_cache_len is None else max_cache_len
         # Some model define a custom `head_dim` != config.hidden_size // config.num_attention_heads
         if config.architectures[0] == "DeepseekV3ForCausalLM":
             self.head_dim = config.qk_rope_head_dim
@@ -53,11 +63,11 @@ class StaticCache(transformers.StaticCache):
 
         self.key_cache: List[torch.Tensor] = []
         self.value_cache: List[torch.Tensor] = []
-        cache_shape = (max_batch_size, self.num_key_value_heads, self.max_cache_len, self.head_dim)
+        cache_shape = (max_batch_size, self.num_key_value_heads, self._max_cache_len, self.head_dim)
         if config.architectures[0] == "DeepseekV2ForCausalLM" or config.architectures[0] == "DeepseekV3ForCausalLM":
             # TODO: for deepseek, cache_shape is different whether using Absorbed MLA, check it automatically
             self.page_size = 64
-            self.max_pages = (self.max_cache_len + self.page_size - 1) // self.page_size
+            self.max_pages = (self._max_cache_len + self.page_size - 1) // self.page_size
             latent_shape = (self.max_pages, self.page_size, 1, config.kv_lora_rank + config.qk_rope_head_dim)
             self.kv_lora_rank = config.kv_lora_rank
             self.qk_rope_head_dim = config.qk_rope_head_dim
@@ -168,7 +178,7 @@ class StaticCache(transformers.StaticCache):
 
     def get_max_length(self) -> Optional[int]:
         """Returns the maximum sequence length of the cached states."""
-        return self.max_cache_len
+        return self._max_cache_len
 
     def reset(self):
         """Resets the cache values while preserving the objects"""
@@ -192,7 +202,15 @@ class StaticCache(transformers.StaticCache):
     
     def get_max_cache_shape(self) -> Tuple[int, int, int, int]:
         """Returns the maximum shape of the cache."""
-        return self.max_cache_len
+        return self._max_cache_len
+
+    @property
+    def max_batch_size(self) -> int:
+        return self._max_batch_size
+
+    @property
+    def max_cache_len(self) -> int:
+        return self._max_cache_len
 
 class KDeepSeekV3Cache(nn.Module):
     def __init__(

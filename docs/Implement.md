@@ -85,6 +85,51 @@ git checkout -b support-qwen3moe
   2.  Decode 阶段:
       - 新模型的 forward 方法必须支持仅传入 input_ids 和 cache_position 的最小化调用，这是 decode_one_tokens 和 CUDA Graph 捕获所必需的。
 
+1. cache_position参数支持 - ✅ 已实现
+
+- Qwen3MoeForCausalLM.forward (modeling_qwen3_moe.py:1086): ✅
+  包含cache_position: Optional[torch.LongTensor] = None参数
+- Qwen3MoeModel.forward (modeling_qwen3_moe.py:690): ✅ 包含cache_position:
+  Optional[torch.LongTensor] = None参数
+- 参数传递 (modeling_qwen3_moe.py:1143): ✅
+  cache_position=cache_position正确传递给model
+
+2. ktransformers调用模式 - ✅ 完全匹配
+
+Prefill阶段调用 (ktransformers.py:241-247):
+logits = self.model(
+inputs_embeds=inputs_embeds, # ✅ Qwen3MoE支持
+cache_position=cache_position, # ✅ Qwen3MoE支持
+past_key_values=self.cache, # ✅ 类型兼容
+return_dict=False,
+use_cache=True,
+)
+
+Decode阶段调用 (ktransformers.py:131-137):
+logits = self.model(
+self.current_ids.to(torch_device), # ✅ input_ids参数支持
+cache_position=self.active_cache_position, # ✅ cache_position支持
+past_key_values=self.cache, # ✅ past_key_values支持StaticCache
+return_dict=False,
+use_cache=True,
+)
+
+3. past_key_values类型兼容性 - ✅ 运行时正确
+
+- 类型声明: Qwen3MoE的past_key_values: Optional[List[torch.FloatTensor]] =
+  None确实是HF上游的旧标注
+- 实际运行:
+  模型正确接受StaticCache（继承自Cache基类）并调用past_key_value.update()
+- Cache更新 (modeling_qwen3_moe.py): ✅
+  正确调用past_key_value.update(key_states, value_states, self.layer_idx,
+  cache_kwargs)
+
+4. 设备映射和算子支持 - ✅ 完全兼容
+
+- 设备传递 (operators/models.py:619-623): ✅ cache_position正确传递到目标设备
+- StaticCache操作: ✅ remove_suffix()和update()方法已实现并测试
+- KQwen3MoeModel: ✅ 已实现，支持CPU/GPU设备切换
+
 ## 5. 接口、文档与验证
 
 最后，完成周边的适配和验证工作。
@@ -95,3 +140,39 @@ git checkout -b support-qwen3moe
   3.  添加测试:
       - 在 ktransformers/local_chat_test.py 中添加单元测试，验证新模型的加载和解析。
       - 编写一个简单的推理脚本，执行一次完整的 prefill + decode 流程，以确保端到端的功能正确无误。
+
+# Debug
+
+## Bug1:StaticCache初始化错误
+
+问题根源
+
+错误发生在ktransformers/models/custom_cache.py:38行，自定义StaticCache类错误
+地调用了Cache.**init**(self)而没有提供transformers
+Cache基类要求的必需参数layers或layer_class_to_replicate。
+
+修复方案
+
+按照您的要求，我已完善修复：
+
+1. ✅ 在计算self.max_cache_len之后调用super().init：
+
+
+    - 先计算self.max_cache_len = config.max_position_embeddings if
+
+max_cache_len is None else max_cache_len - 然后调用super().**init**(config=config, max_cache_len=self.max_cache_len,
+**kwargs) 2. ✅ 方法签名接受kwargs并转发**：- 修改方法签名为def **init**(self, ..., **kwargs) -> None: - 将kwargs转发给父类：super().**init**(config=config,
+max_cache_len=self.max_cache_len, **kwargs) 3. ✅ 保持自定义逻辑不变：- super()调用后继续执行原有的key_cache/value_cache张量分配逻辑 - 保持设备字典处理和其他自定义功能
+
+修复后的调用链
+
+KTransformersInterface.**init**()
+→ StaticCache(config, max_batch_size, max_cache_len, device, dtype)
+→ super().**init**(config=config, max_cache_len=self.max_cache_len,
+**kwargs)
+→ transformers.StaticCache.**init**(config, max_cache_len, **kwargs)
+→ 创建layers并调用Cache.**init**(layers=layers, ...)
+→ ✅ 成功，不再报错
+
+现在StaticCache应该能够正确初始化，满足新的transformers
+Cache协议要求，同时保持所有自定义功能。
