@@ -565,7 +565,13 @@ class KQwen3MoeModel(BaseInjectedModule):
             past_key_values = DynamicCache()
 
         if inputs_embeds is None:
+            # The embedding weights stay on CPU, so stage ids on CPU and send the result back.
+            input_ids_device = input_ids.device
+            if input_ids_device.type != "cpu":
+                input_ids = input_ids.to("cpu")
             inputs_embeds = self.embed_tokens(input_ids)
+            if input_ids_device.type != "cpu":
+                inputs_embeds = inputs_embeds.to(input_ids_device)
 
         if cache_position is None:
             past_seen_tokens = (

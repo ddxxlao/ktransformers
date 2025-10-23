@@ -264,7 +264,7 @@ python ktransformers/server/main.py \
  --gguf_path /workspace/data/models/qwen3moe-gguf/2507/q8 \
  --optimize_config_path ktransformers/optimize/optimize_rules/Qwen3Moe-ktransformers.yaml \
  --backend_type ktransformers
-我们服务器已经能够成功启动，进入监听状态，但是在有输入token进入一段时间后，出现了崩溃。
+我们服务器已经能够成功启动，进入监听状态，但是在有输入token进入一段时间后，出现了崩溃。我需要像Qwen2一样，使用GPU进行prefill，使用CPU进行Decide（或者叫Generate），你可以查看我们的优化配置文件。
 
 错误如下：
 Traceback (most recent call last):
@@ -328,17 +328,50 @@ File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/api/openai/en
 async for res in interface.inference(input_message, id, create.temperature, create.top_p, create.max_tokens, create.max_completion_tokens):
 File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/ktransformers.py", line 290, in inference
 async for v in super().inference(
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/transformers.py", line 474, in inference
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/transformers.py", line 485, in inference
 for t, finish_reason in self.generate():
 File "/opt/conda/lib/python3.11/site-packages/torch/utils/\_contextlib.py", line 36, in generator_context
 response = gen.send(None)
 ^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/transformers.py", line 408, in generate
-num_heads=self.model.config.num_attention_heads, head_dim_ckv=self.model.config.kv_lora_rank,
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/transformers/configuration_utils.py", line 207, in **getattribute**
-return super().**getattribute**(key)
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/transformers.py", line 422, in generate
+next_token = self.decode_one_tokens()
+^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/ktransformers.py", line 131, in decode_one_tokens
+logits = self.model(
+^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in \_wrapped_call_impl
+return self.\_call_impl(*args, \*\*kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in \_call_impl
+return forward_call(*args, **kwargs)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AttributeError: 'Qwen3MoeConfig' object has no attribute 'kv_lora_rank'
+File "/opt/conda/lib/python3.11/site-packages/transformers/utils/deprecation.py", line 172, in wrapped_func
+return func(\*args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/models/modeling_qwen3_moe.py", line 1298, in forward
+outputs = self.model(
+^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in \_wrapped_call_impl
+return self.\_call_impl(*args, \*\*kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in \_call_impl
+return forward_call(*args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/operators/models.py", line 568, in forward
+inputs_embeds = self.embed_tokens(input_ids)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in \_wrapped_call_impl
+return self.\_call_impl(\*args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in \_call_impl
+return forward_call(\*args, \*\*kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/sparse.py", line 190, in forward
+return F.embedding(
+^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/torch/nn/functional.py", line 2551, in embedding
+return torch.embedding(weight, input, padding_idx, scale_grad_by_freq, sparse)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Expected all tensors to be on the same device, but found at least two devices, cpu and cuda:0! (when checking argument for argument index in method wrapper_CUDA\_\_index_select)
 
 请你定位和分析错误来源，告诉我原因

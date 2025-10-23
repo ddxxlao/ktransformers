@@ -221,3 +221,35 @@ reflows, etc.) and does not affect behaviour.
   config fields.
 - ktransformers/local_chat_test.py:134 mirrors the guard used in production to
   keep the test harness aligned.
+
+## Bug 4: Qwen3MoE 设备不匹配错误修复总结
+
+错误: RuntimeError: Expected all tensors to be on the same device, but found
+at least two devices, cpu and cuda:0!
+
+位置: ktransformers/operators/models.py:568 - self.embed_tokens(input_ids)
+根本原因
+
+- input_ids 在 decode 阶段位于 CUDA 设备
+- model.embed_tokens 权重根据 YAML 配置在 CPU 设备
+- KQwen3MoeModel.forward() 直接调用 embedding，未进行设备转换
+
+修复方案
+
+在 KQwen3MoeModel.forward() 中添加设备转换逻辑，与 Qwen2 保持一致。
+文件: ktransformers/operators/models.py:567-574
+
+    修改前:
+    if inputs_embeds is None:
+        inputs_embeds = self.embed_tokens(input_ids)
+
+    修改后:
+    if inputs_embeds is None:
+        # The embedding weights stay on CPU, so stage ids on CPU and send the
+    result back.
+        input_ids_device = input_ids.device
+        if input_ids_device.type != "cpu":
+            input_ids = input_ids.to("cpu")
+        inputs_embeds = self.embed_tokens(input_ids)
+        if input_ids_device.type != "cpu":
+            inputs_embeds = inputs_embeds.to(input_ids_device)
