@@ -32,7 +32,7 @@
 - match:
     name: "^model$"
   replace:
-    class: "ktransformers.operators.models.KQwen2MoeModel"
+    class: "ktransformers.operators.models.KQwen3MoeModel"
     kwargs:
       per_layer_prefill_intput_threshold: 0 # 0 is close layer wise prefill
 

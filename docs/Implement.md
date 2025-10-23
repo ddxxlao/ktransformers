@@ -156,9 +156,7 @@ Cache基类要求的必需参数layers或layer_class_to_replicate。
 按照您的要求，我已完善修复：
 
 1. ✅ 在计算self.max_cache_len之后调用super().init：
-
-
-    - 先计算self.max_cache_len = config.max_position_embeddings if
+   - 先计算self.max_cache_len = config.max_position_embeddings if
 
 max_cache_len is None else max_cache_len - 然后调用super().**init**(config=config, max_cache_len=self.max_cache_len,
 **kwargs) 2. ✅ 方法签名接受kwargs并转发**：- 修改方法签名为def **init**(self, ..., **kwargs) -> None: - 将kwargs转发给父类：super().**init**(config=config,
@@ -176,3 +174,13 @@ KTransformersInterface.**init**()
 
 现在StaticCache应该能够正确初始化，满足新的transformers
 Cache协议要求，同时保持所有自定义功能。
+
+## Bug2: Qwen3MoeAttention.forward lack of position_ids
+
+I inspected ktransformers/models/modeling_qwen3_moe.py and the important part
+of your diff is the updated attention signature: Qwen3MoeAttention.forward now
+accepts position_ids, output_attentions, use_cache, and \*\*kwargs (ktransformers/
+models/modeling_qwen3_moe.py:213). With this change the call coming from
+Qwen3MoeDecoderLayer.forward is satisfied, so the earlier TypeError will no
+longer occur. The rest of the diff is purely formatting (import wrapping, line
+reflows, etc.) and does not affect behaviour.

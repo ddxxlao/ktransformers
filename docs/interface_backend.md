@@ -264,7 +264,7 @@ python ktransformers/server/main.py \
  --gguf_path /workspace/data/models/qwen3moe-gguf/2507/q8 \
  --optimize_config_path ktransformers/optimize/optimize_rules/Qwen3Moe-ktransformers.yaml \
  --backend_type ktransformers
-我们服务器已经能够成功启动，进入监听状态，但是在有输入token进入时，出现了崩溃
+我们服务器已经能够成功启动，进入监听状态，但是在有输入token进入一段时间后，出现了崩溃。
 
 错误如下：
 Traceback (most recent call last):
@@ -328,53 +328,17 @@ File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/api/openai/en
 async for res in interface.inference(input_message, id, create.temperature, create.top_p, create.max_tokens, create.max_completion_tokens):
 File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/ktransformers.py", line 290, in inference
 async for v in super().inference(
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/transformers.py", line 466, in inference
-for t in self.prefill(input_ids, self.check_is_new(thread_id), temperature, top_p, max_tokens, max_completion_tokens):
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/transformers.py", line 474, in inference
+for t, finish_reason in self.generate():
 File "/opt/conda/lib/python3.11/site-packages/torch/utils/\_contextlib.py", line 36, in generator_context
 response = gen.send(None)
 ^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/ktransformers.py", line 258, in prefill
-logits = chunk_prefill(
-^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/ktransformers.py", line 241, in chunk_prefill
-logits = self.model(
-^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in \_wrapped_call_impl
-return self.\_call_impl(*args, \*\*kwargs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in \_call_impl
-return forward_call(*args, **kwargs)
+File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/transformers.py", line 408, in generate
+num_heads=self.model.config.num_attention_heads, head_dim_ckv=self.model.config.kv_lora_rank,
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/opt/conda/lib/python3.11/site-packages/transformers/configuration_utils.py", line 207, in **getattribute**
+return super().**getattribute**(key)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/transformers/utils/deprecation.py", line 172, in wrapped_func
-return func(\*args, **kwargs)
-^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/models/modeling_qwen3_moe.py", line 1132, in forward
-outputs = self.model(
-^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in \_wrapped_call_impl
-return self.\_call_impl(*args, \*\*kwargs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in \_call_impl
-return forward_call(*args, **kwargs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/operators/models.py", line 374, in forward
-layer_outputs = decoder_layer(
-^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in \_wrapped_call_impl
-return self.\_call_impl(\*args, **kwargs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in \_call_impl
-return forward_call(*args, \*\*kwargs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/models/modeling_qwen3_moe.py", line 386, in forward
-hidden_states, self_attn_weights = self.self_attn(
-^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in \_wrapped_call_impl
-return self.\_call_impl(*args, **kwargs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in \_call_impl
-return forward_call(\*args, **kwargs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-TypeError: Qwen3MoeAttention.forward() got an unexpected keyword argument 'position_ids'
+AttributeError: 'Qwen3MoeConfig' object has no attribute 'kv_lora_rank'
 
 请你定位和分析错误来源，告诉我原因
