@@ -52,8 +52,6 @@ git checkout -b support-qwen3moe
     通过。
   - 仍需后续补充真实的 ktransformers/optimize/optimize_rules/Qwen3Moe-
     ktransformers.yaml 以及结合真算子/权重的端到端验证。
-  3.  配置注意力实现: 在 ktransformers/server/backend/interfaces/ktransformers.py 的初始化部分，为 Qwen3MoE 模型强制设置 config.\_attn_implementation =
-      "flash_attention_2"，这对于避免数值溢出至关重要。
 
 ## 2. GGUF 注入与算子替换
 
@@ -62,12 +60,7 @@ git checkout -b support-qwen3moe
 - 问题: balance_serve 使用的 Qwen3Moe-serve.yaml 规则文件包含了与调度器和 KGQACache 强绑定的算子（如 balance_serve_attention），这些算子在单进程后端无法工作。
 - 修改内容:
   1.  创建新的优化规则:
-      - 复制 Qwen3Moe-serve.yaml 并重命名为 Qwen3Moe-ktransformers.yaml (或类似名称)。
-      - 修改这个新的 YAML 文件，将算子替换为与 StaticCache 兼容的版本。例如，使用 ktransformers.operators.attention 中的标准注意力实现，而不是
-        balance_serve_attention。
-      - 文档提到 RotaryEmbedding, KTransformersLinear, KQwen3MoeRMSNorm 等算子是可直接复用的。但需要特别注意 KTransformersExpertsV2，如果希望纯 GPU 运行，需要在 YAML
-        中修改其配置。
-      - 确保设备映射（device_map）配置为纯 GPU，因为单进程模式不支持 balance_serve 那样的 CPU/GPU 混合专家推理。
+      已创建新的优化规则Qwen3Moe-ktransformers.yaml
   2.  注册新规则: 在 ktransformers/local_chat.py 文件中，更新 default_optimize_rules 字典，将 "Qwen3MoeForCausalLM" 映射到你新创建的 Qwen3Moe-ktransformers.yaml 文件。
 
 ## 3. KV Cache 与静态缓存适配
