@@ -32,6 +32,11 @@ from ktransformers.server.config.log import logger
 from ..args import ConfigArgs, default_args
 from ktransformers.operators.flashinfer_wrapper import flashinfer_enabled, MLAWrapperSingleton
 
+
+def _supports_flashinfer_mla(config: Any) -> bool:
+    required_attrs = ("kv_lora_rank", "qk_rope_head_dim", "qk_nope_head_dim")
+    return all(hasattr(config, attr) for attr in required_attrs)
+
 # This TextStreamer is a modified version from https://github.com/huggingface/transformers/blob/main/src/transformers/generation/streamers.py
 class TextStreamer:
 
@@ -400,10 +405,16 @@ class TransformersInterface(BackendInterfaceBase):
             yield self.streamer.end(), "length"
             return
         self.profiler.set_counter("decode", 0)
+        use_flashinfer_mla = flashinfer_enabled and _supports_flashinfer_mla(self.model.config)
+        if flashinfer_enabled and not use_flashinfer_mla:
+            logger.debug(
+                "FlashInfer MLA planning disabled for %s: required config attributes missing",
+                type(self.model.config).__name__,
+            )
 
         for i in range(1, self.max_new_tokens):
             with torch.nn.attention.sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
-                if flashinfer_enabled:
+                if use_flashinfer_mla:
                     MLAWrapperSingleton.plan_all(None,None,None,self.active_cache_position.to(torch.int32)+1, None,
                                              num_heads=self.model.config.num_attention_heads, head_dim_ckv=self.model.config.kv_lora_rank, 
                                              head_dim_kpe=self.model.config.qk_rope_head_dim, page_size=self.cache.page_size,

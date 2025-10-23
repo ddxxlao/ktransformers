@@ -184,3 +184,40 @@ models/modeling_qwen3_moe.py:213). With this change the call coming from
 Qwen3MoeDecoderLayer.forward is satisfied, so the earlier TypeError will no
 longer occur. The rest of the diff is purely formatting (import wrapping, line
 reflows, etc.) and does not affect behaviour.
+
+## Bug3: Model MLA judgement lack
+
+1. 问题定位
+
+- 错误位置: /opt/conda/lib/python3.11/site-packages/ktransformers/server/back
+  end/interfaces/transformers.py:408
+- 错误代码: 尝试访问 self.model.config.kv_lora_rank 属性
+- 错误类型: AttributeError: 'Qwen3MoeConfig' object has no attribute
+  'kv_lora_rank'
+
+2. 问题根源
+
+这个错误发生在 generate() 方法的 decode 循环中。当 flashinfer_enabled 为 True
+时，代码会调用 MLAWrapperSingleton.plan_all() 方法，这个方法是为 DeepSeek
+模型的 MLA（Multi-head Latent Attention）架构设计的，需要以下 DeepSeek
+特有的配置参数：
+
+- kv_lora_rank: DeepSeek MLA 的 KV 压缩维度
+- qk_rope_head_dim: DeepSeek 的 RoPE 头维度
+
+然而，Qwen3MoE 模型使用的是标准的注意力机制，不是 MLA 架构，因此：
+
+- Qwen3MoeConfig 没有 kv_lora_rank 属性
+- Qwen3MoeConfig 没有 qk_rope_head_dim 属性
+- Qwen3MoE 不需要也不应该使用 MLAWrapperSingleton.plan_all()
+
+3. 解决方案
+
+- ktransformers/server/backend/interfaces/transformers.py:36 and 408 now gate
+  FlashInfer MLA planning behind _supports_flashinfer_mla, logging once when a
+  config (e.g. Qwen3Moe) lacks kv_lora_rank/qk_\*\_head_dim.
+- ktransformers/local_chat.py:150 applies the same attribute check before
+  enabling FlashInfer-specific kwargs, so the CLI won’t reference undefined
+  config fields.
+- ktransformers/local_chat_test.py:134 mirrors the guard used in production to
+  keep the test harness aligned.

@@ -147,6 +147,10 @@ def local_chat(
         model.generation_config.pad_token_id = model.generation_config.eos_token_id
     model.eval()
     logging.basicConfig(level=logging.INFO)
+    supports_flashinfer_mla = all(
+        hasattr(config, attr)
+        for attr in ("kv_lora_rank", "qk_rope_head_dim", "qk_nope_head_dim")
+    )
 
     system = platform.system()
     if system == "Windows":
@@ -201,6 +205,7 @@ def local_chat(
                 or config.architectures[0] == "DeepseekV3ForCausalLM"
             )
             and flashinfer_enabled
+            and supports_flashinfer_mla
             and get_compute_capability() >= 8
             and device_manager.gpu_vendor == GPUVendor.NVIDIA
         ):
