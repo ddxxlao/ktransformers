@@ -264,114 +264,75 @@ python ktransformers/server/main.py \
  --gguf_path /workspace/data/models/qwen3moe-gguf/2507/q8 \
  --optimize_config_path ktransformers/optimize/optimize_rules/Qwen3Moe-ktransformers.yaml \
  --backend_type ktransformers
-我们服务器已经能够成功启动，进入监听状态，但是在有输入token进入一段时间后，出现了崩溃。我需要像Qwen2一样，使用GPU进行prefill，使用CPU进行Decide（或者叫Generate），你可以查看我们的优化配置文件。
+我们服务器已经能够成功启动，进入监听状态，但是在有输入token后，持续出现重复乱码，无法实际进行使用。我们使用python ktransformers/tests/test_speed.py --api_url http://localhost:10002/v1/chat/completions --model Qwen3-30B-A3B-Instruct-2507 --prompt_lens 1024 --max_tokens 512 --concurrent 1 进行输入token
 
-错误如下：
-Traceback (most recent call last):
-File "/opt/conda/lib/python3.11/site-packages/uvicorn/protocols/http/h11_impl.py", line 403, in run_asgi
-result = await app( # type: ignore[func-returns-value]
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in **call**
-return await self.app(scope, receive, send)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/fastapi/applications.py", line 1133, in **call**
-await super().**call**(scope, receive, send)
-File "/opt/conda/lib/python3.11/site-packages/starlette/applications.py", line 113, in **call**
-await self.middleware_stack(scope, receive, send)
-File "/opt/conda/lib/python3.11/site-packages/starlette/middleware/errors.py", line 186, in **call**
-raise exc
-File "/opt/conda/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in **call**
-await self.app(scope, receive, \_send)
-File "/opt/conda/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in **call**
-await self.app(scope, receive, send)
-File "/opt/conda/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 63, in **call**
-await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
-File "/opt/conda/lib/python3.11/site-packages/starlette/\_exception_handler.py", line 53, in wrapped_app
-raise exc
-File "/opt/conda/lib/python3.11/site-packages/starlette/\_exception_handler.py", line 42, in wrapped_app
-await app(scope, receive, sender)
-File "/opt/conda/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in **call**
-await self.app(scope, receive, send)
-File "/opt/conda/lib/python3.11/site-packages/starlette/routing.py", line 716, in **call**
-await self.middleware_stack(scope, receive, send)
-File "/opt/conda/lib/python3.11/site-packages/starlette/routing.py", line 736, in app
-await route.handle(scope, receive, send)
-File "/opt/conda/lib/python3.11/site-packages/starlette/routing.py", line 290, in handle
-await self.app(scope, receive, send)
-File "/opt/conda/lib/python3.11/site-packages/fastapi/routing.py", line 123, in app
-await wrap_app_handling_exceptions(app, request)(scope, receive, send)
-File "/opt/conda/lib/python3.11/site-packages/starlette/\_exception_handler.py", line 53, in wrapped_app
-raise exc
-File "/opt/conda/lib/python3.11/site-packages/starlette/\_exception_handler.py", line 42, in wrapped_app
-await app(scope, receive, sender)
-File "/opt/conda/lib/python3.11/site-packages/fastapi/routing.py", line 110, in app
-await response(scope, receive, send)
-File "/opt/conda/lib/python3.11/site-packages/starlette/responses.py", line 270, in **call**
-with collapse_excgroups():
-File "/opt/conda/lib/python3.11/contextlib.py", line 158, in **exit**
-self.gen.throw(typ, value, traceback)
-File "/opt/conda/lib/python3.11/site-packages/starlette/\_utils.py", line 85, in collapse_excgroups
-raise exc
-File "/opt/conda/lib/python3.11/site-packages/starlette/responses.py", line 274, in wrap
-await func()
-File "/opt/conda/lib/python3.11/site-packages/starlette/responses.py", line 254, in stream_response
-async for chunk in self.body_iterator:
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/schemas/assistants/streaming.py", line 80, in check_client_link
-async for event in async_events:
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/schemas/assistants/streaming.py", line 93, in to_stream_reply
-async for event in async_events:
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/schemas/assistants/streaming.py", line 87, in add_done
-async for event in async_events:
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/schemas/assistants/streaming.py", line 107, in filter_chat_chunk
-async for event in async_events:
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/api/openai/endpoints/chat.py", line 266, in inner
-async for res in interface.inference(input_message, id, create.temperature, create.top_p, create.max_tokens, create.max_completion_tokens):
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/ktransformers.py", line 290, in inference
-async for v in super().inference(
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/transformers.py", line 485, in inference
-for t, finish_reason in self.generate():
-File "/opt/conda/lib/python3.11/site-packages/torch/utils/\_contextlib.py", line 36, in generator_context
-response = gen.send(None)
-^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/transformers.py", line 422, in generate
-next_token = self.decode_one_tokens()
-^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/server/backend/interfaces/ktransformers.py", line 131, in decode_one_tokens
-logits = self.model(
-^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in \_wrapped_call_impl
-return self.\_call_impl(*args, \*\*kwargs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in \_call_impl
-return forward_call(*args, **kwargs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/transformers/utils/deprecation.py", line 172, in wrapped_func
-return func(\*args, **kwargs)
-^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/models/modeling_qwen3_moe.py", line 1298, in forward
-outputs = self.model(
-^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in \_wrapped_call_impl
-return self.\_call_impl(*args, \*\*kwargs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in \_call_impl
-return forward_call(*args, **kwargs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/ktransformers/operators/models.py", line 568, in forward
-inputs_embeds = self.embed_tokens(input_ids)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in \_wrapped_call_impl
-return self.\_call_impl(\*args, **kwargs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in \_call_impl
-return forward_call(\*args, \*\*kwargs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/modules/sparse.py", line 190, in forward
-return F.embedding(
-^^^^^^^^^^^^
-File "/opt/conda/lib/python3.11/site-packages/torch/nn/functional.py", line 2551, in embedding
-return torch.embedding(weight, input, padding_idx, scale_grad_by_freq, sparse)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-RuntimeError: Expected all tensors to be on the same device, but found at least two devices, cpu and cuda:0! (when checking argument for argument index in method wrapper_CUDA\_\_index_select)
+输出如下：
+
+.
+the the the the the the, the the the the the. the the.
+the the the the the the.
+
+The the the.
+
+.2
+, the.
+.
+this
+
+The the the.
+
+' . light
+the this.
+the them
+heart the the the the the the the the the what
+the the! the some
+the the the.. I
 
 请你定位和分析错误来源，告诉我原因
+
+Q2: Runtime Fix
+我正在实施让单线程后端 ktransformer 支持最新的Qwen3MoE系列模型的重构，首先我想让你阅读我们总结的工作流 @/docs/single_workflow.md 明白单线程后端加载模型和推理运算的全部流程。再之后，请你阅读我们的实施计划 @/docs/Implement.md 了解我们已经进行的改动 。我们已经完成了KQwen3MoeForCausalLMStatic和KQwen3MoeModel类，并在@ktransformers/local_chat.py中实现了对Qwen3MoeForCausalLM的注册。我已经完成了一份针对单线程后端的优化规则的Qwen3Moe-ktransformers.yaml文件，位置在 @ktransformers/optimize/optimize_rules/Qwen3Moe-ktransformers.yaml。现在，我进入了debug阶段，需要开始对代码进行整体调试，我的运行命令如下：
+python ktransformers/server/main.py \
+ --model_name Qwen3MoeForCausalLM \
+ --model_path /workspace/data/models/qwen3moe \
+ --gguf_path /workspace/data/models/qwen3moe-gguf/2507/q8 \
+ --optimize_config_path ktransformers/optimize/optimize_rules/Qwen3Moe-ktransformers.yaml \
+ --backend_type ktransformers
+我们服务器已经能够成功启动，进入监听状态，但是在有输入token后，持续出现重复乱码，无法实际进行使用。
+
+输出如下：
+
+{"id":"03c175bb57084185bb825b32cc96c722","object":"chat.completion","created":1761316474,"model":"Qwen3MoeForCausalLM","choices":[{"index":0,"message":{"role":"assistant","content":" is,\n\nHello\n\nI\n\n\\\n\n\\\n\n\n\n\\\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\n\n\n\\\n\n\\\n\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\\\n\n\n\n\n\\\n\n\\\n\n\n\n\\\n\n\\\n\n\\\n\n\\\n\n"},"finish_reason":"length"}],"usage":{"prompt_tokens":14,"completion_tokens":98,"total_tokens":112,"prompt_tokens_details":null,"completion_tokens_details":null},"system_fingerprint":"fp_c76e25e0035c"}
+
+我已经请你修复过一次bug，但是仍然存在问题，上一次修复的记录如下，但是仍然出现类似的重复乱码循环问题：
+
+- 预填充完成后，KQwen3MoeSparseMoeBlockV2 切换到CPU卸载分支（self.experts 为 KExpertsCPU），因此每个解码步骤都会通过 KExpertsCPU.forward 调用 cpuinfer（ktransformers/operators/experts.py:134-341）。
+
+- KExpertsCPU.load linearly hands the raw GGUF memmap buffers to the C++ kernel (see the pointer writes around ktransformers/operators/experts.py:173-215). That code assumes the expert weights are laid out [num_experts, in_dim, out_dim], exactly how Qwen2 GGUF files were organised.
+- KExpertsCPU.load 以线性方式将原始的 GGUF memmap 缓冲区传递给 C++ 内核（参见 ktransformers/operators/experts.py 文件中第 173 至 215 行附近的指针写入）。该代码假设专家权重的布局为 [num_experts, in_dim, out_dim]，与 Qwen2 GGUF 文件的组织方式完全一致。
+
+- Qwen3 的 2507 GGUF 改变了打包方式：专家轴现在位于最后（[in_dim, out_dim, num_experts]）。你可以直接从加载器元数据中看到这一点——例如，blk.0.ffn_gate_exps.weight 的形状为 [2048, 768, 128]（通过 GGUFLoader.tensor_info 在 ktransformers/util/custom_loader.py 中）。当这些缓冲区被直接传递时，cpuinfer 会交错读取不同专家的权重，导致路由专家实际上输出垃圾数据。预填充阶段看起来仍合理（因为它使用 GPU 内核），但一旦我们在 CPU 上解码，logits 就会崩溃，采样会退化为你所看到的重复“the … the”流。
+
+- balance_serve 构建版本从未将不支持的 gguf 布局传递给 KExpertsCPU。其部署流程在解码时仍使用相同的 KExpertsCPU 类（ktransformers/operators/experts.py:134-341），但传递给 cpuinfer 的权重来自我们自己的转换路径（SafeTensorLoader.load_experts，ktransformers/util/custom_loader.py:74-166）。该加载器将专家权重以 [num_experts, in_dim, out_dim] 的形状堆叠，因此当 KExpertsCPU.load() 将每个专家流式传输到 C++ 运行时，这些切片恰好与 cpuinfer 所期望的格式对齐。
+
+- 在你单线程测试中，你将 gguf_path 指向了厂商发布的 Qwen3Moe 量化版本（/workspace/data/models/qwen3moe-gguf/2507/q8）。我们在 GGUFLoader.tensor_info 中读取的元数据显示，这些张量现在以 [in_dim, out_dim, num_experts] 的形式存储。我们共享的 GGUF 加载器（ktransformers/util/custom_loader.py:402-436）仍然假设旧的顺序，仅按每个专家连续推进一个窗口。一旦解码切换到 CPU，KQwen3MoeSparseMoeBlockV2（ktransformers/operators/experts.py:1581-1643）中的 self.experts(...) 就会将这些错位的缓冲区传递给 cpuinfer，从而产生你观察到的无意义输出流。
+
+- 因为 balance_serve 要么（a）通过 SafeTensorLoader 加载浮点 safetensors，要么（b）使用我们自己的量化脚本生成的 GGUF 包（这些包仍以 [num_experts, …] 形式输出），所以它永远不会遇到这种布局不匹配问题。如果你今天把相同的 2507 gguf 文件放入 balance_serve，将会触发完全相同的回归——该后端并不存在额外的修复机制。
+
+这种差异并不在于调度或多线程逻辑，而完全在于哪个加载器管道向 KExpertsCPU 提供数据。继续使用 HF safetensors 或用我们的脚本重新量化，两个后端都会正常工作。只要你在不转置专家轴的情况下消费新的厂商 GGUF 文件（即在 GGUFLoader.load_expert_tensor 中未进行转置），任何将专家卸载到 CPU 的后端都会开始输出垃圾数据。
+
+修复方案： - Updated ktransformers/util/custom_loader.py:402-459 so load_expert_tensor
+now detects interleaved expert layouts and pulls GGUF blocks correctly before
+dequantising, keeping the legacy contiguous path intact.
+
+- Despite the loader fix, your rerun still yields repeated gibberish, so there’s
+  likely another latent issue along the decode path.
+
+修复未成功，大概率这是因为隐性错误导致很难修复，所以我们需要让程序给出更多信息，来帮助我们来定位错误，所以，我需要你仔细思考，在哪里会出现可能的错误点，并将该错误点附近如何添加信息输出，输出什么信息这些内容。
+
+日志文件在 ~/.ktransformers/logs/lexllama.log
+
+## Documentation:
+
+我已经实施让单线程后端 ktransformer 支持最新的Qwen3MoE系列模型的重构，首先我想让你阅读我们总结的工作流 @/docs/single_workflow.md 明白单线程后端加载模型和推理运算的全部流程。再之后，请你阅读我们的实施计划 @/docs/Implement.md 了解我们已经进行的改动 。我们已经完成了KQwen3MoeForCausalLMStatic和KQwen3MoeModel类，并在@ktransformers/local_chat.py中实现了对Qwen3MoeForCausalLM的注册。我已经完成了一份针对单线程后端的优化规则的Qwen3Moe-ktransformers.yaml文件，位置在 @ktransformers/optimize/optimize_rules/Qwen3Moe-ktransformers.yaml。现在我需要你进行Decode阶段对于Experts专家的数据流追踪：GPU→CPU→GPU 时序与接口梳理，形成一份详尽且完善的文档，并且有对应的代码位置，下面请你开始，并将结果输出到 @/docs/dataflow.md
+（请注意，你的数据流应该根据Yaml配置文件的区别而呈现不同路径，例如如果generate_device: "cpu" generate_op: "KExpertsCPU"，就是使用CPU进行推理，如果generate_device: "cuda" generate_op: "KExpertsTorch"就是使用GPU进行推理。请你根据不同的推理路径进行不同的文档整理）

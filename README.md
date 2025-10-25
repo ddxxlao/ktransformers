@@ -158,6 +158,20 @@ python ktransformers/server/main.py \
   --backend_type balance_serve
 ```
 
+Using these to quickly test:
+
+```bash
+curl -X POST "http://localhost:10002/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Qwen3-30B-A3B-Instruct-2507",
+    "messages": [
+      {"role": "user", "content": "Hello, how are you?"}
+    ],
+    "max_tokens": 100
+  }'
+```
+
 ## 5. Measure Qwen3 performance with `test_speed.py`
 
 Use the async benchmarking script in `ktransformers/tests/test_speed.py` to stream tokens from the running server and collect prefill / decode speeds for Qwen3.

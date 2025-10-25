@@ -253,3 +253,74 @@ at least two devices, cpu and cuda:0!
         inputs_embeds = self.embed_tokens(input_ids)
         if input_ids_device.type != "cpu":
             inputs_embeds = inputs_embeds.to(input_ids_device)
+
+## Bug5: Decode 输出乱码
+
+- 预填充完成后，KQwen3MoeSparseMoeBlockV2 切换到CPU卸载分支（self.experts 为 KExpertsCPU），因此每个解码步骤都会通过 KExpertsCPU.forward 调用 cpuinfer（ktransformers/operators/experts.py:134-341）。
+
+- KExpertsCPU.load linearly hands the raw GGUF memmap buffers to the C++ kernel (see the pointer writes around ktransformers/operators/experts.py:173-215). That code assumes the expert weights are laid out [num_experts, in_dim, out_dim], exactly how Qwen2 GGUF files were organised.
+- KExpertsCPU.load 以线性方式将原始的 GGUF memmap 缓冲区传递给 C++ 内核（参见 ktransformers/operators/experts.py 文件中第 173 至 215 行附近的指针写入）。该代码假设专家权重的布局为 [num_experts, in_dim, out_dim]，与 Qwen2 GGUF 文件的组织方式完全一致。
+
+- Qwen3 的 2507 GGUF 改变了打包方式：专家轴现在位于最后（[in_dim, out_dim, num_experts]）。你可以直接从加载器元数据中看到这一点——例如，blk.0.ffn_gate_exps.weight 的形状为 [2048, 768, 128]（通过 GGUFLoader.tensor_info 在 ktransformers/util/custom_loader.py 中）。当这些缓冲区被直接传递时，cpuinfer 会交错读取不同专家的权重，导致路由专家实际上输出垃圾数据。预填充阶段看起来仍合理（因为它使用 GPU 内核），但一旦我们在 CPU 上解码，logits 就会崩溃，采样会退化为你所看到的重复“the … the”流。
+
+- balance_serve 构建版本从未将不支持的 gguf 布局传递给 KExpertsCPU。其部署流程在解码时仍使用相同的 KExpertsCPU 类（ktransformers/operators/experts.py:134-341），但传递给 cpuinfer 的权重来自我们自己的转换路径（SafeTensorLoader.load_experts，ktransformers/util/custom_loader.py:74-166）。该加载器将专家权重以 [num_experts, in_dim, out_dim] 的形状堆叠，因此当 KExpertsCPU.load() 将每个专家流式传输到 C++ 运行时，这些切片恰好与 cpuinfer 所期望的格式对齐。
+
+- 在你单线程测试中，你将 gguf_path 指向了厂商发布的 Qwen3Moe 量化版本（/workspace/data/models/qwen3moe-gguf/2507/q8）。我们在 GGUFLoader.tensor_info 中读取的元数据显示，这些张量现在以 [in_dim, out_dim, num_experts] 的形式存储。我们共享的 GGUF 加载器（ktransformers/util/custom_loader.py:402-436）仍然假设旧的顺序，仅按每个专家连续推进一个窗口。一旦解码切换到 CPU，KQwen3MoeSparseMoeBlockV2（ktransformers/operators/experts.py:1581-1643）中的 self.experts(...) 就会将这些错位的缓冲区传递给 cpuinfer，从而产生你观察到的无意义输出流。
+
+- 因为 balance_serve 要么（a）通过 SafeTensorLoader 加载浮点 safetensors，要么（b）使用我们自己的量化脚本生成的 GGUF 包（这些包仍以 [num_experts, …] 形式输出），所以它永远不会遇到这种布局不匹配问题。如果你今天把相同的 2507 gguf 文件放入 balance_serve，将会触发完全相同的回归——该后端并不存在额外的修复机制。
+
+这种差异并不在于调度或多线程逻辑，而完全在于哪个加载器管道向 KExpertsCPU 提供数据。继续使用 HF safetensors 或用我们的脚本重新量化，两个后端都会正常工作。只要你在不转置专家轴的情况下消费新的厂商 GGUF 文件（即在 GGUFLoader.load_expert_tensor 中未进行转置），任何将专家卸载到 CPU 的后端都会开始输出垃圾数据。
+
+修复方案： - Updated ktransformers/util/custom_loader.py:402-459 so load_expert_tensor
+now detects interleaved expert layouts and pulls GGUF blocks correctly before
+dequantising, keeping the legacy contiguous path intact.
+
+- Despite the loader fix, your rerun still yields repeated gibberish, so there’s
+  likely another latent issue along the decode path.
+
+### Error again
+
+修复未成功，可能是由于隐性错误导致很难修复，所以我们需要让程序给出更多信息，来帮助我们来定位错误
+如果仍感觉有问题，可以获取一段简短的 logits 输出，以便我们再次检查解码后的专家权重。
+
+若想查看驱动生成过程的 logits，单线程后端最直接的插入位置在接口循环中：
+
+- ktransformers/server/backend/interfaces/transformers.py:302-324
+  (decode_one_tokens) 已通过以下方式接收最后一步的 logits：
+
+logits = self.model(self.current_ids, cache_position=...,
+past_key_values=self.cache, return_dict=False, use_cache=True)[0]
+logits = logits[0, -1, :]
+
+- 你可以对这一块（以及预填充阶段中的类似调用，ktransformers/server/backend/interfaces/transformers.py:284-298）进行插桩，将张量暂存或记录日志。例如，在调用 self.logits_to_token 之前注册一个副作用：
+
+torch.save(logits.cpu(), f"/tmp/logits_step{self.seq_length}.pt")
+
+或把原始数值推入一个线程安全的队列/文件以供后续检查。
+
+由于这些张量位于 GPU 上，请记得在序列化前将其移至 CPU。
+
+其他实用方案：
+
+1. 临时日志辅助工具
+   在接口类中添加一个工具函数，当设置了环境变量（如 DUMP_LOGITS=1）时，将前几个 token 的 logits 写入磁盘。这能保持正常运行时的代码路径清晰，并按需提供样本。
+
+2. 调试期间的内联打印
+   如果仅需快速查看，可在 decode_one_tokens 中插入 print(logits[:10].tolist())。但请注意，每步都打印会显著拖慢解码循环，因此建议使用小计数器进行控制。
+
+3. 结构化捕获用于回归测试
+   对于更受控的运行场景（例如通过 python ktransformers/tests/test_speed.py …），可添加一个钩子，将 logits 添加到接口对象中存储的 Python 列表里，待 generate() 完成后统一导出。这样避免了逐 token 的文件 I/O，同时仍能完整保留分析所需的轨迹数据。
+
+无论选择哪种方法，完成调试后请务必移除或保护相关插桩代码——持久化日志会影响吞吐量。
+本地日志补集：
+
+1. 在 ktransformers/server/backend/interfaces/transformers.py 的
+   decode_one_tokens 中临时保存 logits（建议 torch.save(logits.cpu(), f"/tmp/
+   logits_step{self.seq_length}.pt")，前 10 个 token 即可）。
+2. 同时抓取每步被送入 KExpertsCPU.forward 的 expert_ids、weights（可在
+   ktransformers/operators/experts.py:KQwen3MoeSparseMoeBlockV2.forward 中打印/
+   保存）。
+3. 重新运行测试命令并把首批 logits 张量、expert ids/weights 的样本，以及控制台关
+   键信息贴上来。
+
+这样我们就能核对 logits 是否已经正常、以及 CPU 专家权重是否仍然错位。
